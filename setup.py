@@ -27,7 +27,7 @@ setuptools.setup(name='warcprox',
         long_description=open('README.rst').read(),
         license='GPL',
         packages=['warcprox'],
-        install_requires=['pyopenssl', 'warctools>=4.8.3'],  # gdbm not in pip :(
+        install_requires=['pyopenssl', 'futures', 'warctools>=4.8.3'],  # gdbm not in pip :(
         dependency_links=['git+https://github.com/internetarchive/warctools.git#egg=warctools-4.8.3'],
         tests_require=['requests>=2.0.1', 'pytest'],  # >=2.0.1 for https://github.com/kennethreitz/requests/pull/1636
         cmdclass = {'test': PyTest},

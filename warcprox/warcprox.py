@@ -82,6 +82,8 @@ import tempfile
 import json
 import traceback
 
+import concurrent.futures
+
 try:
     from warcprox.warcwriters import WarcWriter, WarcPerUrlWriter
 except ImportError:
@@ -497,13 +499,19 @@ class RecordedUrl(object):
 
         self.status = status
 
+class PooledMixin(socketserver.ThreadingMixIn):
+    def process_request(self, request, client_address):
+        if hasattr(self, 'pool') and self.pool:
+            self.pool.submit(self.process_request_thread, request, client_address)
+        else:
+            socketserver.ThreadingMixIn.process_request(self, request, client_address)
 
-class WarcProxy(socketserver.ThreadingMixIn, http_server.HTTPServer):
+class WarcProxy(PooledMixin, http_server.HTTPServer):
     logger = logging.getLogger('warcprox.WarcProxy')
 
     def __init__(self, server_address=('localhost', 8000),
             req_handler_class=WarcProxyHandler, bind_and_activate=True,
-            ca=None, recorded_url_q=None, digest_algorithm='sha1'):
+            ca=None, recorded_url_q=None, digest_algorithm='sha1', max_threads=None):
         http_server.HTTPServer.__init__(self, server_address, req_handler_class, bind_and_activate)
 
         self.digest_algorithm = digest_algorithm
@@ -517,6 +525,14 @@ class WarcProxy(socketserver.ThreadingMixIn, http_server.HTTPServer):
             self.recorded_url_q = recorded_url_q
         else:
             self.recorded_url_q = queue.Queue()
+
+        self.pool = None
+        if max_threads is not None:
+            try:
+                max_threads=int(max_threads)
+                self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_threads)
+            except ValueError:
+                pass
 
     def server_activate(self):
         http_server.HTTPServer.server_activate(self)
@@ -956,6 +972,8 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
             help='write gzip-compressed warc records')
     arg_parser.add_argument('-u', '--warc-per-url', dest='warc_per_url', action='store_true',
             help='create a warc per request in optional target dir')
+    arg_parser.add_argument('-m', '--max-threads', dest='max_threads', default=None,
+            help='max number of threads in pool, if not specified, default to unlimited')
     arg_parser.add_argument('-n', '--prefix', dest='prefix',
             default='WARCPROX', help='WARC filename prefix')
     arg_parser.add_argument('-s', '--size', dest='size',
@@ -1021,7 +1039,8 @@ def main(argv=sys.argv):
 
     proxy = WarcProxy(server_address=(args.address, int(args.port)),
             ca=ca, recorded_url_q=recorded_url_q,
-            digest_algorithm=args.digest_algorithm)
+            digest_algorithm=args.digest_algorithm,
+            max_threads=args.max_threads)
 
     if args.playback_port is not None:
         playback_index_db = PlaybackIndexDb(args.playback_index_db_file)
