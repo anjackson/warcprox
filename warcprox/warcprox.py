@@ -400,6 +400,29 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
         if item.startswith('do_'):
             return self.do_COMMAND
 
+    def send_error(self, code, message=None):
+        # override base send_error, but add custom header
+        # to identify error as coming from warcprox
+
+        try:
+            short, long = self.responses[code]
+        except KeyError:
+            short, long = '???', '???'
+        if message is None:
+            message = short
+        explain = long
+        self.log_error("code %d, message %s", code, message)
+        content = (self.error_message_format %
+                   {'code': code, 'message': message, 'explain': explain})
+
+        self.send_response(code, message)
+        self.send_header("Content-Type", self.error_content_type)
+        self.send_header('Connection', 'close')
+        self.send_header('x-warcprox-error', code)
+        self.end_headers()
+        if self.command != 'HEAD' and code >= 200 and code not in (204, 304):
+            self.wfile.write(content)
+
     def log_error(self, fmt, *args):
         self.logger.error("{0} - - [{1}] {2}".format(self.address_string(),
             self.log_date_time_string(), fmt % args))
