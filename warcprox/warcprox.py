@@ -387,6 +387,11 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
     def do_COMMAND(self):
         if not self.is_connect:
+            if self.command == 'PUTMETA':
+                #self._determine_host_port()
+                self._handle_putmeta()
+                return
+
             try:
                 # Connect to destination
                 self._determine_host_port()
@@ -404,6 +409,9 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
     def _proxy_request(self):
         raise Exception('_proxy_request() not implemented in MitmProxyHandler, must be implemented in subclass!')
+
+    def _handle_putmeta(self):
+        raise Exception('Not supported')
 
     def __getattr__(self, item):
         if item.startswith('do_'):
@@ -445,10 +453,7 @@ class WarcProxyHandler(MitmProxyHandler):
 
     logger = logging.getLogger('warcprox.WarcProxyHandler')
 
-    def _proxy_request(self):
-        # Build request
-        req_str = '{} {} {}\r\n'.format(self.command, self.path, self.request_version)
-
+    def _get_custom_params(self):
         # Get and remove optional request 'cookies' for warcprox
         # parse the header as cookie to avoid dealing with custom encoding schemes
         custom_params_header = self.headers.get('x-warcprox-params')
@@ -459,6 +464,12 @@ class WarcProxyHandler(MitmProxyHandler):
             custom_params = dict((n, m.value) for n, m in cp_cookie.items())
         else:
             custom_params = {}
+
+        return custom_params
+
+    def _proxy_request(self):
+        # Build request
+        req_str = '{} {} {}\r\n'.format(self.command, self.path, self.request_version)
 
         # Add headers to the request
         # XXX in at least python3.3 str(self.headers) uses \n not \r\n :(
@@ -501,15 +512,38 @@ class WarcProxyHandler(MitmProxyHandler):
         h.close()
         self._proxy_sock.close()
 
+        custom_params = self._get_custom_params()
+
         recorded_url = RecordedUrl(url=self.url, request_data=req,
                 response_recorder=h.recorder, remote_ip=remote_ip,
                 custom_params=custom_params, status=h.status)
         self.server.recorded_url_q.put(recorded_url)
 
+    def _handle_putmeta(self):
+        metadata = ''
+        # use custom metadata scheme
+        self.url = self.path.replace('http:/', 'metadata:/')
+
+        if 'Content-Length' in self.headers and 'Content-Type' in self.headers:
+            metadata += self.rfile.read(int(self.headers['Content-Length']))
+            custom_params = self._get_custom_params()
+
+            rec_metadata = RecordedUrl(url=self.url,
+                                       request_data=metadata,
+                                       response_recorder=None,
+                                       remote_ip=b'',
+                                       custom_params=custom_params,
+                                       content_type=self.headers['Content-Type'])
+
+            self.server.recorded_url_q.put(rec_metadata)
+
+        #self.logger.info('PUTMETA: ' + metadata)
+        self.send_response(204, 'OK')
+        self.end_headers()
 
 class RecordedUrl(object):
     def __init__(self, url, request_data, response_recorder, remote_ip,
-                 custom_params={}, status=None):
+                 custom_params={}, status=None, content_type=''):
         # XXX should test what happens with non-ascii url (when does
         # url-encoding happen?)
         if type(url) is not bytes:
@@ -530,6 +564,8 @@ class RecordedUrl(object):
         self.custom_params = custom_params
 
         self.status = status
+
+        self.content_type = content_type
 
 class PooledMixin(socketserver.ThreadingMixIn):
     def process_request(self, request, client_address):

@@ -33,6 +33,15 @@ class BaseWarcWriter(object):
     def build_warc_records(self, recorded_url):
         warc_date = warctools.warc.warc_datetime_str(datetime.utcnow())
 
+        # metadata special case
+        if not recorded_url.response_recorder and recorded_url.content_type:
+            metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  data=recorded_url.request_data,
+                                                  warc_type=warctools.WarcRecord.METADATA,
+                                                  content_type=recorded_url.content_type)
+            return [metadata_rec]
+
+
         dedup_info = None
         if self.dedup_db is not None and recorded_url.response_recorder.payload_digest is not None:
             key = self.digest_str(recorded_url.response_recorder.payload_digest)
@@ -90,7 +99,7 @@ class BaseWarcWriter(object):
                 content_type=httptools.RequestMessage.CONTENT_TYPE,
                 concurrent_to=principal_record.id)
 
-        return principal_record, request_record
+        return [principal_record, request_record]
 
 
     def digest_str(self, hash_obj):
@@ -220,6 +229,10 @@ class BaseWarcWriter(object):
             self._last_sync = time.time()
 
     def _final_tasks(self, recordset, recordset_offset, record_length, filename, recorded_url):
+        # metadata record, no final tasks
+        if not recorded_url.response_recorder and recorded_url.content_type:
+            return
+
         if (self.dedup_db or self.playback_index_db):
             digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
 
