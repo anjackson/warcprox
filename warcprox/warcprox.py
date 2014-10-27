@@ -89,6 +89,14 @@ try:
 except ImportError:
     from warcwriters import WarcWriter, WarcPerUrlWriter
 
+def _read_version_bytes():
+    version_txt = os.path.sep.join(__file__.split(os.path.sep)[:-1] + ['version.txt'])
+    with open(version_txt, 'rb') as fin:
+        return fin.read().strip()
+
+version_bytes = _read_version_bytes()
+version_str = version_bytes.strip().decode('utf-8')
+
 class CertificateAuthority(object):
     logger = logging.getLogger('warcprox.CertificateAuthority')
 
@@ -113,7 +121,7 @@ class CertificateAuthority(object):
 
         # Generate certificate
         self.cert = OpenSSL.crypto.X509()
-        self.cert.set_version(3)
+        self.cert.set_version(2)
         # avoid sec_error_reused_issuer_and_serial
         self.cert.set_serial_number(random.randint(0,2**64-1))
         self.cert.get_subject().CN = 'Warcprox CA on {}'.format(socket.gethostname())[:64]
@@ -1021,6 +1029,8 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
     arg_parser.add_argument('--playback-index-db-file', dest='playback_index_db_file',
             default='./warcprox-playback-index.db',
             help='playback index database file (only used if --playback-port is specified)')
+    arg_parser.add_argument('--version', action='version',
+            version="warcprox {}".format(version_str))
     arg_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true')
     arg_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true')
     # [--ispartof=warcinfo ispartof]
