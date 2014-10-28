@@ -795,7 +795,8 @@ class DedupDb(object):
         self.db.close()
 
     def sync(self):
-        self.db.sync()
+        if hasattr(self.db, 'sync'):
+            self.db.sync()
 
     def save_digest(self, digest, response_record, recorded_url):
         if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
@@ -843,7 +844,8 @@ class PlaybackIndexDb(object):
 
 
     def sync(self):
-        self.db.sync()
+        if hasattr(self.db, 'sync'):
+            self.db.sync()
 
 
     def save_url(self, digest, response_record, offset, length, filename, recorded_url):
