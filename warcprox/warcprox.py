@@ -473,9 +473,15 @@ class WarcProxyHandler(MitmProxyHandler):
 
         # Add headers to the request
         # XXX in at least python3.3 str(self.headers) uses \n not \r\n :(
-        req_str += '\r\n'.join('{}: {}'.format(k,v) for (k,v) in self.headers.items())
+        #req_str += '\r\n'.join('{}: {}'.format(k,v) for (k,v) in self.headers.items())
 
-        req = req_str.encode('utf-8') + b'\r\n\r\n'
+        for k, v in self.headers.items():
+            # remove proxy-connection
+            if k == 'proxy-connection':
+                k = 'connection'
+            req_str += k.capitalize() + ': ' + v + '\r\n'
+
+        req = req_str.encode('utf-8') + b'\r\n'
 
         # Append message body if present to the request
         if 'Content-Length' in self.headers:
