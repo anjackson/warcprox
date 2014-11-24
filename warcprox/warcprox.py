@@ -450,7 +450,6 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
 
 class WarcProxyHandler(MitmProxyHandler):
-
     logger = logging.getLogger('warcprox.WarcProxyHandler')
 
     def _get_custom_params(self):
@@ -479,6 +478,7 @@ class WarcProxyHandler(MitmProxyHandler):
             # remove proxy-connection
             if k == 'proxy-connection':
                 k = 'connection'
+                v = 'Close'
             req_str += k.capitalize() + ': ' + v + '\r\n'
 
         req = req_str.encode('utf-8') + b'\r\n'
@@ -506,9 +506,9 @@ class WarcProxyHandler(MitmProxyHandler):
                 digest_algorithm=self.server.digest_algorithm)
         h.begin()
 
-        buf = h.read(8192)
+        buf = h.read(WarcProxy.buff_size)
         while buf != b'':
-            buf = h.read(8192)
+            buf = h.read(WarcProxy.buff_size)
 
         self.log_request(h.status, h.recorder.len)
 
@@ -573,14 +573,17 @@ class RecordedUrl(object):
 
         self.content_type = content_type
 
-class PooledMixin(socketserver.ThreadingMixIn):
+class PooledMixIn(socketserver.ThreadingMixIn):
     def process_request(self, request, client_address):
         if hasattr(self, 'pool') and self.pool:
             self.pool.submit(self.process_request_thread, request, client_address)
         else:
             socketserver.ThreadingMixIn.process_request(self, request, client_address)
 
-class WarcProxy(PooledMixin, http_server.HTTPServer):
+
+class WarcProxy(PooledMixIn, http_server.HTTPServer):
+    buff_size = 16384
+
     logger = logging.getLogger('warcprox.WarcProxy')
 
     def __init__(self, server_address=('localhost', 8000),
@@ -1058,6 +1061,9 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
     arg_parser.add_argument('--rollover-idle-time',
             dest='rollover_idle_time', default=None,
             help="WARC file rollover idle time threshold in seconds (so that Friday's last open WARC doesn't sit there all weekend waiting for more data)")
+
+    arg_parser.add_argument('--read-buff-size', dest='buff_size', default=None,
+                            help='size of read buffer from remote')
     try:
         hash_algos = hashlib.algorithms_guaranteed
     except AttributeError:
@@ -1119,6 +1125,9 @@ def main(argv=sys.argv):
             ca=ca, recorded_url_q=recorded_url_q,
             digest_algorithm=args.digest_algorithm,
             max_threads=args.max_threads)
+
+    if args.buff_size:
+        WarcProxy.buff_size = int(args.buff_size)
 
     if args.playback_port is not None:
         playback_index_db = PlaybackIndexDb(args.playback_index_db_file)
