@@ -320,7 +320,7 @@ class WarcWriter(BaseWarcWriter):
 class WarcPerUrlWriter(BaseWarcWriter):
 
     # regex to match invalid chars in dir
-    STRIP_DIR_RX = re.compile('[\W]+')
+    STRIP_DIR_RX = re.compile('[^\w/-]+')
 
     def init_writer(self):
         pass
@@ -330,9 +330,10 @@ class WarcPerUrlWriter(BaseWarcWriter):
         ext = '.gz' if self.gzip else ''
 
         target_dir = recorded_url.custom_params.get('target')
+        print('TARGET IS: ' + str(target_dir))
 
         if target_dir:
-            # strip non-alphanum and _ from target dir, for security
+            # strip non-alphanum from target dir, for security
             target_dir = self.STRIP_DIR_RX.sub('', target_dir)
             target_dir = os.path.join(self.directory, target_dir)
 
