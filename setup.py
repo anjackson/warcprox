@@ -5,7 +5,7 @@ from setuptools.command.test import test as TestCommand
 import sys
 import setuptools 
 
-VERSION_BYTES = b'1.3'
+VERSION_BYTES = b'1.4'
 
 def full_version_bytes():
     import subprocess, time
@@ -47,7 +47,7 @@ setuptools.setup(name='warcprox',
         license='GPL',
         packages=['warcprox'],
         package_data={'warcprox':['version.txt']},
-        install_requires=['pyopenssl', 'futures', 'warctools>=4.8.3'],  # gdbm not in pip :(
+        install_requires=['certauth>=1.1.0', 'warctools>=4.8.3'],  # gdbm not in pip :(
         dependency_links=['git+https://github.com/internetarchive/warctools.git#egg=warctools-4.8.3'],
         tests_require=['requests>=2.0.1', 'pytest'],  # >=2.0.1 for https://github.com/kennethreitz/requests/pull/1636
         cmdclass = {'test': PyTest},
@@ -59,9 +59,6 @@ setuptools.setup(name='warcprox',
             'Environment :: Console',
             'License :: OSI Approved :: GNU General Public License (GPL)',
             'Programming Language :: Python :: 2.7',
-            'Programming Language :: Python :: 3',
-            'Programming Language :: Python :: 3.2',
-            'Programming Language :: Python :: 3.3',
             'Programming Language :: Python :: 3.4',
             'Topic :: Internet :: Proxy Servers',
             'Topic :: Internet :: WWW/HTTP',
