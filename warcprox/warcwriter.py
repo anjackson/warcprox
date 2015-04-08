@@ -63,7 +63,7 @@ class WarcWriter(object):
 
     # returns a tuple (principal_record, request_record) where principal_record is either a response or revisit record
     def build_warc_records(self, recorded_url):
-        warc_date = warctools.warc.warc_datetime_str(datetime.utcnow())
+        warc_date = warctools.warc.warc_datetime_str(recorded_url.datetime)
 
         dedup_info = None
 
