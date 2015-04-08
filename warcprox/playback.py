@@ -217,8 +217,12 @@ class PlaybackIndexDb(object):
         except:
             pass
 
-    def save(self, warcfile, recordset, offset):
-        response_record = recordset[0]
+    def save(self, warcfile, response_record, recorded_url, offset):
+        if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
+             warctools.WarcRecord.RESPONSE) or
+            recorded_url.response_recorder.payload_size() == 0):
+            return
+
         # XXX canonicalize url?
         url = response_record.get_header(warctools.WarcRecord.URL)
         date_str = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')

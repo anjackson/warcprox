@@ -38,7 +38,7 @@ import json
 import socket
 
 from certauth.certauth import CertificateAuthority
-import warcprox.mitmproxy
+from warcprox.mitmproxy import MitmProxyHandler
 
 class ProxyingRecorder(object):
     """
@@ -152,22 +152,8 @@ class ProxyingRecordingHTTPResponse(http_client.HTTPResponse):
         self.fp = self.recorder
 
 
-class WarcProxyHandler(warcprox.mitmproxy.MitmProxyHandler):
+class WarcProxyHandler(MitmProxyHandler):
     logger = logging.getLogger("warcprox.warcprox.WarcProxyHandler")
-
-    def _get_custom_params(self):
-        # Get and remove optional request 'cookies' for warcprox
-        # parse the header as cookie to avoid dealing with custom encoding schemes
-        custom_params_header = self.headers.get('x-warcprox-params')
-        if custom_params_header:
-            del self.headers['x-warcprox-params']
-            cp_cookie = cookie.SimpleCookie()
-            cp_cookie.load(custom_params_header)
-            custom_params = dict((n, m.value) for n, m in cp_cookie.items())
-        else:
-            custom_params = {}
-
-        return custom_params
 
     def _proxy_request(self):
         # Build request
@@ -218,9 +204,9 @@ class WarcProxyHandler(warcprox.mitmproxy.MitmProxyHandler):
                 path=self.path)
         h.begin()
 
-        buf = h.read(WarcProxy.buff_size)
+        buf = h.read(self.warcprox_buff_size)
         while buf != b'':
-            buf = h.read(WarcProxy.buff_size)
+            buf = h.read(self.warcprox_buff_size)
 
         self.log_request(h.status, h.recorder.len)
 
@@ -295,14 +281,13 @@ class PooledMixIn(socketserver.ThreadingMixIn):
 
 
 class WarcProxy(socketserver.ThreadingMixIn, http_server.HTTPServer):
-    buff_size = 16384
-    timeout = None
-
     logger = logging.getLogger("warcprox.warcprox.WarcProxy")
 
     def __init__(self, server_address=('localhost', 8000),
             req_handler_class=WarcProxyHandler, bind_and_activate=True,
-            ca=None, recorded_url_q=None, digest_algorithm='sha1', max_threads=None):
+            ca=None, recorded_url_q=None, digest_algorithm='sha1',
+            buff_size=None, timeout=None, max_threads=None):
+
         http_server.HTTPServer.__init__(self, server_address, req_handler_class, bind_and_activate)
 
         self.digest_algorithm = digest_algorithm
@@ -323,10 +308,15 @@ class WarcProxy(socketserver.ThreadingMixIn, http_server.HTTPServer):
         self.pool = None
         if max_threads is not None:
             try:
-                max_threads=int(max_threads)
                 self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_threads)
             except ValueError:
                 pass
+
+        if timeout:
+            MitmProxyHandler.warcprox_timeout = timeout
+
+        if buff_size:
+            MitmProxyHandler.warcprox_buff_size = buff_size
 
     def server_activate(self):
         http_server.HTTPServer.server_activate(self)

@@ -35,7 +35,7 @@ class DedupDb(object):
         except:
             pass
 
-    def save(self, key, response_record, offset):
+    def save(self, key, response_record, recorded_url, offset):
         record_id = response_record.get_header(warctools.WarcRecord.ID).decode('latin1')
         url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
         date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')

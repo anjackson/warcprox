@@ -17,6 +17,10 @@ import logging
 import ssl
 
 class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
+    # no way to pass through constructor, so making these static
+    warcprox_buff_size = 16384
+    warcprox_timeout = 10
+
     logger = logging.getLogger("warcprox.mitmproxy.MitmProxyHandler")
 
     def __init__(self, request, client_address, server):
@@ -58,7 +62,7 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
     def _connect_to_host(self):
         # Connect to destination
         self._proxy_sock = socket.socket()
-        self._proxy_sock.settimeout(10)
+        self._proxy_sock.settimeout(self.warcprox_timeout)
         self._proxy_sock.connect((self.hostname, int(self.port)))
 
         # Wrap socket if SSL is required
@@ -66,8 +70,10 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
             self._proxy_sock = ssl.wrap_socket(self._proxy_sock)
 
     def _transition_to_ssl(self):
+        # if hostname is too long, only use last 64 parts of name
+        hostname = self.hostname[-64:]
         self.request = self.connection = ssl.wrap_socket(self.connection,
-                server_side=True, certfile=self.server.ca.cert_for_host(self.hostname))
+                server_side=True, certfile=self.server.ca.cert_for_host(hostname))
 
     def do_CONNECT(self):
         self.is_connect = True
@@ -109,6 +115,10 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
     def do_COMMAND(self):
         if not self.is_connect:
+            if self.command == 'PUTMETA':
+                self._handle_putmeta()
+                return
+
             try:
                 # Connect to destination
                 self._determine_host_port()
@@ -126,6 +136,32 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
     def _proxy_request(self):
         raise Exception('_proxy_request() not implemented in MitmProxyHandler, must be implemented in subclass!')
+
+    def _handle_putmeta(self):
+        raise Exception('Not supported')
+
+    def send_error(self, code, message=None):
+        # override base send_error, but add custom header
+        # to identify error as coming from warcprox
+
+        try:
+            short, long = self.responses[code]
+        except KeyError:
+            short, long = '???', '???'
+        if message is None:
+            message = short
+        explain = long
+        self.log_error("code %d, message %s", code, message)
+        content = (self.error_message_format %
+                   {'code': code, 'message': message, 'explain': explain})
+
+        self.send_response(code, message)
+        self.send_header("Content-Type", self.error_content_type)
+        self.send_header('Connection', 'close')
+        self.send_header('x-warcprox-error', code)
+        self.end_headers()
+        if self.command != 'HEAD' and code >= 200 and code not in (204, 304):
+            self.wfile.write(content)
 
     def __getattr__(self, item):
         if item.startswith('do_'):

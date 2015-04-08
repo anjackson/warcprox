@@ -56,6 +56,15 @@ class WarcWriter:
         warc_date = warctools.warc.warc_datetime_str(datetime.utcnow())
 
         dedup_info = None
+
+        # metadata special case
+        if not recorded_url.response_recorder and recorded_url.content_type:
+            metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  data=recorded_url.request_data,
+                                                  warc_type=warctools.WarcRecord.METADATA,
+                                                  content_type=recorded_url.content_type)
+            return [metadata_rec]
+
         if self.dedup_db is not None and recorded_url.response_recorder.payload_digest is not None:
             key = self.digest_str(recorded_url.response_recorder.payload_digest)
             dedup_info = self.dedup_db.lookup(key)
@@ -221,14 +230,18 @@ class WarcWriter:
 
 
     def _final_tasks(self, recorded_url, recordset, recordset_offset):
+        # metadata record, no final tasks
+        if not recorded_url.response_recorder and recorded_url.content_type:
+            return
+
         if (self.dedup_db is not None
                 and recordset[0].get_header(warctools.WarcRecord.TYPE) == warctools.WarcRecord.RESPONSE
                 and recorded_url.response_recorder.payload_size() > 0):
             key = self.digest_str(recorded_url.response_recorder.payload_digest)
-            self.dedup_db.save(key, recordset[0], recordset_offset)
+            self.dedup_db.save(key, recordset[0], recorded_url, recordset_offset)
 
         if self.playback_index_db is not None:
-            self.playback_index_db.save(self._f_finalname, recordset, recordset_offset)
+            self.playback_index_db.save(self._f_finalname, recordset[0], recorded_url, recordset_offset)
 
         recorded_url.response_recorder.tempfile.close()
 

@@ -41,6 +41,8 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
             default='./warcs', help='where to write warcs')
     arg_parser.add_argument('-z', '--gzip', dest='gzip', action='store_true',
             help='write gzip-compressed warc records')
+    arg_parser.add_argument('-m', '--max-threads', dest='max_threads', default=None,
+            help='max number of threads in pool, if not specified, default to unlimited')
     arg_parser.add_argument('-n', '--prefix', dest='prefix',
             default='WARCPROX', help='WARC filename prefix')
     arg_parser.add_argument('-s', '--size', dest='size',
@@ -49,6 +51,13 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
     arg_parser.add_argument('--rollover-idle-time',
             dest='rollover_idle_time', default=None,
             help="WARC file rollover idle time threshold in seconds (so that Friday's last open WARC doesn't sit there all weekend waiting for more data)")
+
+    arg_parser.add_argument('--read-buff-size', dest='buff_size', type=int, default=8192,
+                            help='size of read buffer from remote')
+
+    arg_parser.add_argument('--timeout', dest='timeout', type=int, default=10,
+                            help='timeout for remote connection socket')
+
     try:
         hash_algos = hashlib.algorithms_guaranteed
     except AttributeError:
@@ -111,7 +120,10 @@ def main(argv=sys.argv):
     proxy = warcprox.warcprox.WarcProxy(
             server_address=(args.address, int(args.port)), ca=ca,
             recorded_url_q=recorded_url_q,
-            digest_algorithm=args.digest_algorithm)
+            digest_algorithm=args.digest_algorithm,
+            max_threads=args.max_threads,
+            buff_size=args.buff_size,
+            timeout=args.timeout)
 
     if args.playback_port is not None:
         playback_index_db = warcprox.playback.PlaybackIndexDb(args.playback_index_db_file)
