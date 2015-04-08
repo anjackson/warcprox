@@ -13,7 +13,7 @@ import warcprox.warcwriter
 class WarcproxController(object):
     logger = logging.getLogger("warcprox.controller.WarcproxController")
 
-    def __init__(self, proxy=None, warc_writer_thread=None, playback_proxy=None):
+    def __init__(self, proxy=None, warc_writer_thread=None, warc_writer=None, playback_proxy=None):
         """
         Create warcprox controller.
 
@@ -32,7 +32,8 @@ class WarcproxController(object):
         if warc_writer_thread is not None:
             self.warc_writer_thread = warc_writer_thread
         else:
-            self.warc_writer_thread = warcprox.warcwriter.WarcWriterThread(recorded_url_q=self.proxy.recorded_url_q)
+            self.warc_writer_thread = warcprox.warcwriter.WarcWriterThread(recorded_url_q=self.proxy.recorded_url_q,
+                                                                           warc_writer=warc_writer)
 
         self.playback_proxy = playback_proxy
 

@@ -37,6 +37,8 @@ import hashlib
 import json
 import socket
 
+import concurrent.futures
+
 from certauth.certauth import CertificateAuthority
 from warcprox.mitmproxy import MitmProxyHandler
 
@@ -109,7 +111,7 @@ class ProxyingRecorder(object):
                 self.logger.warn('{} sending data to proxy client'.format(e))
                 self.logger.info('will continue downloading from remote server without sending to client')
         else:
-            self.logger.info('Still downloading: {0} {1}'.format(self.path, self.len))
+            self.logger.debug('Still downloading: {0} {1}'.format(self.path, self.len))
 
     def read(self, size=-1):
         hunk = self.fp.read(size)
@@ -159,7 +161,7 @@ class WarcProxyHandler(MitmProxyHandler):
         # Build request
         req_str = '{} {} {}\r\n'.format(self.command, self.path, self.request_version)
 
-        warcprox_meta = self.headers.get('Warcprox-Meta')
+        warcprox_meta = self.headers.get('X-Warcprox-Meta')
 
         # Swallow headers that don't make sense to forward on, i.e. most
         # hop-by-hop headers, see http://tools.ietf.org/html/rfc2616#section-13.5

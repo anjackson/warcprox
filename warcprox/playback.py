@@ -217,7 +217,7 @@ class PlaybackIndexDb(object):
         except:
             pass
 
-    def save(self, warcfile, response_record, recorded_url, offset):
+    def save_url(self, warcfile, response_record, recorded_url, offset, length=0, digest=None):
         if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
              warctools.WarcRecord.RESPONSE) or
             recorded_url.response_recorder.payload_size() == 0):

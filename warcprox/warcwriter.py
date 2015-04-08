@@ -19,16 +19,19 @@ import hanzo.httptools
 from hanzo import warctools
 import warcprox
 
-class WarcWriter:
+class WarcWriter(object):
     logger = logging.getLogger("warcprox.warcwriter.WarcWriter")
 
     # port is only used for warc filename
     def __init__(self, directory='./warcs', rollover_size=1000000000,
+            rollover_idle_time=None,
             gzip=False, prefix='WARCPROX', port=0,
             digest_algorithm='sha1', base32=False, dedup_db=None,
-            playback_index_db=None):
+            playback_index_db=None, skip_info=False,
+            write_in_place=False):
 
         self.rollover_size = rollover_size
+        self.rollover_idle_time = rollover_idle_time
 
         self.gzip = gzip
         self.digest_algorithm = digest_algorithm
@@ -42,9 +45,16 @@ class WarcWriter:
         self.prefix = prefix
         self.port = port
 
+        # skip writing warcinfo
+        self.skip_info = skip_info
+
+        # don't write to a '.open' file first
+        self.write_in_place = write_in_place
         self._f = None
         self._fpath = None
         self._serial = 0
+
+        self._last_activity = time.time()
 
         if not os.path.exists(directory):
             self.logger.info("warc destination directory {} doesn't exist, creating it".format(directory))
@@ -67,7 +77,7 @@ class WarcWriter:
 
         if self.dedup_db is not None and recorded_url.response_recorder.payload_digest is not None:
             key = self.digest_str(recorded_url.response_recorder.payload_digest)
-            dedup_info = self.dedup_db.lookup(key)
+            dedup_info = self.dedup_db.lookup(key, recorded_url)
 
         if dedup_info is not None:
             # revisit record
@@ -171,12 +181,24 @@ class WarcWriter:
         now = datetime.utcnow()
         return '{}{}'.format(now.strftime('%Y%m%d%H%M%S'), now.microsecond//1000)
 
+    def on_check_rollover(self):
+        if (self._f is not None
+             and self.rollover_idle_time is not None
+             and self.rollover_idle_time > 0
+             and time.time() - self._last_activity > self.rollover_idle_time):
+            self.logger.debug('rolling over warc file after {} seconds idle'.format(time.time() - self._last_activity))
+            self.close_writer()
+            return False
+
+        return True
+
     def close_writer(self):
         if self._fpath:
             self.logger.info('closing {0}'.format(self._f_finalname))
             self._f.close()
-            finalpath = os.path.sep.join([self.directory, self._f_finalname])
-            os.rename(self._fpath, finalpath)
+            if not self.write_in_place:
+                finalpath = os.path.sep.join([self.directory, self._f_finalname])
+                os.rename(self._fpath, finalpath)
 
             self._fpath = None
             self._f = None
@@ -216,32 +238,50 @@ class WarcWriter:
             self._f_finalname = '{}-{}-{:05d}-{}-{}-{}.warc{}'.format(
                     self.prefix, self.timestamp17(), self._serial, os.getpid(),
                     socket.gethostname(), self.port, '.gz' if self.gzip else '')
-            self._fpath = os.path.sep.join([self.directory, self._f_finalname + '.open'])
+
+            filename = self._f_finalname
+            if not self.write_in_place:
+                filename += '.open'
+
+            self._fpath = os.path.sep.join([self.directory, filename])
 
             self._f = open(self._fpath, 'wb')
 
-            warcinfo_record = self._build_warcinfo_record(self._f_finalname)
-            self.logger.debug('warcinfo_record.headers={}'.format(warcinfo_record.headers))
-            warcinfo_record.write_to(self._f, gzip=self.gzip)
+            if not self.skip_info:
+                warcinfo_record = self._build_warcinfo_record(self._f_finalname)
+                self.logger.debug('warcinfo_record.headers={}'.format(warcinfo_record.headers))
+                warcinfo_record.write_to(self._f, gzip=self.gzip)
 
             self._serial += 1
 
         return self._f
 
 
-    def _final_tasks(self, recorded_url, recordset, recordset_offset):
+    def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length):
         # metadata record, no final tasks
         if not recorded_url.response_recorder and recorded_url.content_type:
             return
 
+        if self.dedup_db or self.playback_index_db:
+            digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
+        else:
+            digest_key = None
+
         if (self.dedup_db is not None
                 and recordset[0].get_header(warctools.WarcRecord.TYPE) == warctools.WarcRecord.RESPONSE
                 and recorded_url.response_recorder.payload_size() > 0):
-            key = self.digest_str(recorded_url.response_recorder.payload_digest)
-            self.dedup_db.save(key, recordset[0], recorded_url, recordset_offset)
+            self.dedup_db.save_digest(digest_key,
+                                      recordset[0],
+                                      recorded_url,
+                                      recordset_offset)
 
         if self.playback_index_db is not None:
-            self.playback_index_db.save(self._f_finalname, recordset[0], recorded_url, recordset_offset)
+            self.playback_index_db.save_url(self._f_finalname,
+                                            recordset[0],
+                                            recorded_url,
+                                            recordset_offset,
+                                            record_length,
+                                            digest_key)
 
         recorded_url.response_recorder.tempfile.close()
 
@@ -261,19 +301,65 @@ class WarcWriter:
                     self._fpath, offset))
 
         self._f.flush()
+        record_length = writer.tell() - recordset_offset
 
-        self._final_tasks(recorded_url, recordset, recordset_offset)
+        self._final_tasks(recorded_url, recordset, recordset_offset, record_length)
 
+        self._last_activity = time.time()
+
+
+class MultiWarcWriter(WarcWriter):
+    """ Open multiple WarcWriters based on specified
+        target dir param. Keep each one open until
+        the rollover_idle_timeout has elapsed.
+    """
+    def __init__(self, *args, **kwargs):
+        super(MultiWarcWriter, self).__init__(*args, **kwargs)
+        self.writers = {}
+
+    def write_records(self, recorded_url):
+        target = recorded_url.warcprox_meta['target']
+
+        new_dir = os.path.join(self.directory, target)
+
+        if target not in self.writers:
+            if not os.path.isdir(new_dir):
+                os.makedirs(new_dir)
+
+            self.writers[target] = WarcWriter(
+                directory=new_dir,
+                rollover_size=self.rollover_size,
+                gzip=self.gzip,
+                prefix=self.prefix,
+                port=self.port,
+                digest_algorithm=self.digest_algorithm,
+                base32=self.base32,
+                dedup_db=self.dedup_db,
+                playback_index_db=self.playback_index_db,
+                skip_info=self.skip_info,
+                write_in_place=self.write_in_place)
+
+        self.writers[target].write_records(recorded_url)
+
+    def on_check_rollover(self):
+        for k, writer in list(self.writers.items()):
+            if not writer.on_check_rollover():
+                del self.writers[k]
+
+    def close_writer(self):
+        for writer in self.writers.values():
+            writer.close_writer()
+
+        self.writers = {}
 
 
 class WarcWriterThread(threading.Thread):
     logger = logging.getLogger("warcprox.warcwriter.WarcWriterThread")
 
-    def __init__(self, recorded_url_q=None, warc_writer=None, rollover_idle_time=None):
+    def __init__(self, recorded_url_q=None, warc_writer=None):
         """recorded_url_q is a queue.Queue of warcprox.warcprox.RecordedUrl."""
         threading.Thread.__init__(self, name='WarcWriterThread')
         self.recorded_url_q = recorded_url_q
-        self.rollover_idle_time = rollover_idle_time
         self.stop = threading.Event()
         if warc_writer:
             self.warc_writer = warc_writer
@@ -283,23 +369,17 @@ class WarcWriterThread(threading.Thread):
     def run(self):
         self.logger.info('WarcWriterThread starting, directory={} gzip={} rollover_size={} rollover_idle_time={} prefix={} port={}'.format(
                 os.path.abspath(self.warc_writer.directory), self.warc_writer.gzip, self.warc_writer.rollover_size,
-                self.rollover_idle_time, self.warc_writer.prefix, self.warc_writer.port))
+                self.warc_writer.rollover_idle_time, self.warc_writer.prefix, self.warc_writer.port))
 
-        self._last_sync = self._last_activity = time.time()
+        self._last_sync = time.time()
 
         while not self.stop.is_set():
             try:
                 recorded_url = self.recorded_url_q.get(block=True, timeout=0.5)
                 self.logger.info("recorded_url.warcprox_meta={} for {}".format(recorded_url.warcprox_meta, recorded_url.url))
                 self.warc_writer.write_records(recorded_url)
-                self._last_activity = time.time()
             except queue.Empty:
-                if (self.warc_writer._fpath is not None
-                        and self.rollover_idle_time is not None
-                        and self.rollover_idle_time > 0
-                        and time.time() - self._last_activity > self.rollover_idle_time):
-                    self.logger.debug('rolling over warc file after {} seconds idle'.format(time.time() - self._last_activity))
-                    self.warc_writer.close_writer()
+                self.warc_writer.on_check_rollover()
 
                 if time.time() - self._last_sync > 60:
                     if self.warc_writer.dedup_db:

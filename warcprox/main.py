@@ -144,7 +144,7 @@ def main(argv=sys.argv):
             recorded_url_q=recorded_url_q, warc_writer=warc_writer,
             rollover_idle_time=int(args.rollover_idle_time) if args.rollover_idle_time is not None else None)
 
-    controller = warcprox.controller.WarcproxController(proxy, warc_writer_thread, playback_proxy)
+    controller = warcprox.controller.WarcproxController(proxy, warc_writer_thread, warc_writer, playback_proxy)
     controller.run_until_shutdown()
 
 

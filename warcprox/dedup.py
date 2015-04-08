@@ -35,7 +35,7 @@ class DedupDb(object):
         except:
             pass
 
-    def save(self, key, response_record, recorded_url, offset):
+    def save_digest(self, key, response_record, recorded_url, offset):
         record_id = response_record.get_header(warctools.WarcRecord.ID).decode('latin1')
         url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
         date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
@@ -46,7 +46,7 @@ class DedupDb(object):
         self.db[key] = json_value.encode('utf-8')
         self.logger.debug('dedup db saved {}:{}'.format(key, json_value))
 
-    def lookup(self, key):
+    def lookup(self, key, recorded_url=None):
         if key in self.db:
             json_result = self.db[key]
             result = json.loads(json_result.decode('utf-8'))

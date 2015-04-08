@@ -147,7 +147,7 @@ class WarcproxTest(unittest.TestCase):
         warc_writer_thread = warcprox.warcwriter.WarcWriterThread(recorded_url_q=recorded_url_q,
                 warc_writer=warc_writer)
 
-        self.warcprox = warcprox.controller.WarcproxController(proxy, warc_writer_thread, playback_proxy)
+        self.warcprox = warcprox.controller.WarcproxController(proxy, warc_writer_thread, warc_writer, playback_proxy)
         self.logger.info('starting warcprox')
         self.warcprox_thread = threading.Thread(name='WarcproxThread',
                 target=self.warcprox.run_until_shutdown)
