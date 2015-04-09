@@ -315,12 +315,14 @@ class MultiWarcWriter(WarcWriter):
     """
     def __init__(self, *args, **kwargs):
         super(MultiWarcWriter, self).__init__(*args, **kwargs)
+        self.output_dir_key = kwargs.get('output_dir', 'output_dir')
         self.writers = {}
 
     def write_records(self, recorded_url):
-        target = recorded_url.warcprox_meta['target']
+        target = recorded_url.warcprox_meta.get(self.output_dir_key, 'default')
 
         new_dir = os.path.join(self.directory, target)
+        logging.info('Output Dir: ' + new_dir)
 
         if target not in self.writers:
             if not os.path.isdir(new_dir):

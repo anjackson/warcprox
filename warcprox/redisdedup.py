@@ -14,11 +14,11 @@ class RedisDedupDb(object):
     T14_STRIP = re.compile(r'[^\d]')
 
     def __init__(self, redis_url, sesh_timeout,
-                 dupe_timeout, max_size, param_key='target'):
+                 dupe_timeout, max_size, sesh_key='sesh_id'):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.redis_url = redis_url
         self.redis = redis.StrictRedis.from_url(redis_url)
-        self.param_key = param_key
+        self.sesh_key = sesh_key
 
         self.sesh_timeout = sesh_timeout
         self.dupe_delta = timedelta(seconds=dupe_timeout)
@@ -38,7 +38,7 @@ class RedisDedupDb(object):
             recorded_url.response_recorder.payload_size() == 0):
             return
 
-        sesh = recorded_url.warcprox_meta.get(self.param_key, 'default')
+        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
         key = sesh
 
         record_id = response_record.get_header(warctools.WarcRecord.ID).decode('latin1')
@@ -56,7 +56,7 @@ class RedisDedupDb(object):
         self.logger.debug('redis dedup saved {}:{}'.format(digest, json_value))
 
     def lookup(self, digest, recorded_url=None):
-        sesh = recorded_url.warcprox_meta.get(self.param_key, 'default')
+        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
         key = sesh
 
         if self.max_size:
@@ -102,7 +102,7 @@ class RedisDedupDb(object):
         url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
         date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
 
-        sesh = recorded_url.warcprox_meta.get(self.param_key, 'default')
+        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
 
         key = sesh
         dupe_key = key + ':d:' + url
