@@ -169,7 +169,7 @@ class WarcProxyHandler(MitmProxyHandler):
         # and doesn't throw KeyError in __delitem__
         for h in ('Connection', 'Proxy-Connection', 'Keep-Alive',
                 'Proxy-Authenticate', 'Proxy-Authorization', 'Upgrade',
-                'Warcprox-Meta'):
+                'X-Warcprox-Meta'):
             del self.headers[h]
 
         # Add headers to the request

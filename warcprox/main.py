@@ -23,11 +23,13 @@ import warcprox.warcwriter
 import warcprox.warcprox
 import warcprox.controller
 
+from warcprox.redisdedup import RedisDedupDb
+
 def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
     arg_parser = argparse.ArgumentParser(prog=prog,
             description='warcprox - WARC writing MITM HTTP/S proxy',
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    arg_parser.add_argument('-p', '--port', dest='port', default='8000',
+    arg_parser.add_argument('-p', '--port', dest='port', default=8000, type=int,
             help='port to listen on')
     arg_parser.add_argument('-b', '--address', dest='address',
             default='localhost', help='address to listen on')
@@ -41,15 +43,15 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
             default='./warcs', help='where to write warcs')
     arg_parser.add_argument('-z', '--gzip', dest='gzip', action='store_true',
             help='write gzip-compressed warc records')
-    arg_parser.add_argument('-m', '--max-threads', dest='max_threads', default=None,
+    arg_parser.add_argument('-t', '--max-threads', dest='max_threads', type=int, default=None,
             help='max number of threads in pool, if not specified, default to unlimited')
     arg_parser.add_argument('-n', '--prefix', dest='prefix',
             default='WARCPROX', help='WARC filename prefix')
-    arg_parser.add_argument('-s', '--size', dest='size',
+    arg_parser.add_argument('-s', '--size', dest='size', type=int,
             default=1000*1000*1000,
             help='WARC file rollover size threshold in bytes')
     arg_parser.add_argument('--rollover-idle-time',
-            dest='rollover_idle_time', default=None,
+            dest='rollover_idle_time', default=None, type=int,
             help="WARC file rollover idle time threshold in seconds (so that Friday's last open WARC doesn't sit there all weekend waiting for more data)")
 
     arg_parser.add_argument('--read-buff-size', dest='buff_size', type=int, default=8192,
@@ -77,6 +79,18 @@ def _build_arg_parser(prog=os.path.basename(sys.argv[0])):
             version="warcprox {}".format(warcprox.version_str))
     arg_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true')
     arg_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true')
+
+    arg_parser.add_argument('-m', '--multiwarc', action='store_true')
+
+    arg_parser.add_argument('-i', '--in-place', action='store_true')
+
+    # redis dedup
+    arg_parser.add_argument('--redis-dedup-url')
+    arg_parser.add_argument('--redis-sesh-timeout', type=int, default=0)
+    arg_parser.add_argument('--redis-dupe-timeout', type=int, default=300)
+    arg_parser.add_argument('--redis-max-sesh-size', type=int, default=0)
+
+
     # [--ispartof=warcinfo ispartof]
     # [--description=warcinfo description]
     # [--operator=warcinfo operator]
@@ -105,7 +119,13 @@ def main(argv=sys.argv):
         logging.fatal(e)
         exit(1)
 
-    if args.dedup_db_file in (None, '', '/dev/null'):
+    # redis dedup
+    if args.redis_dedup_url:
+        dedup_db = RedisDedupDb(args.redis_dedup_url,
+                                args.redis_sesh_timeout,
+                                args.redis_dupe_timeout,
+                                args.redis_max_sesh_size)
+    elif args.dedup_db_file in (None, '', '/dev/null'):
         logging.info('deduplication disabled')
         dedup_db = None
     else:
@@ -125,7 +145,11 @@ def main(argv=sys.argv):
             buff_size=args.buff_size,
             timeout=args.timeout)
 
-    if args.playback_port is not None:
+    # redis dedup
+    if args.redis_dedup_url:
+        playback_index_db = dedup_db
+        playback_proxy = None
+    elif args.playback_port is not None:
         playback_index_db = warcprox.playback.PlaybackIndexDb(args.playback_index_db_file)
         playback_server_address=(args.address, int(args.playback_port))
         playback_proxy = warcprox.playback.PlaybackProxy(server_address=playback_server_address,
@@ -135,14 +159,22 @@ def main(argv=sys.argv):
         playback_index_db = None
         playback_proxy = None
 
-    warc_writer = warcprox.warcwriter.WarcWriter(directory=args.directory,
-            gzip=args.gzip, prefix=args.prefix, port=int(args.port),
-            rollover_size=int(args.size), base32=args.base32,
+
+    if args.multiwarc:
+        warc_writer_class = warcprox.warcwriter.MultiWarcWriter
+    else:
+        warc_writer_class = warcprox.warcwriter.WarcWriter
+
+    warc_writer = warc_writer_class(directory=args.directory,
+            gzip=args.gzip, prefix=args.prefix, port=args.port,
+            rollover_size=args.size, base32=args.base32,
             dedup_db=dedup_db, digest_algorithm=args.digest_algorithm,
-            playback_index_db=playback_index_db)
+            playback_index_db=playback_index_db,
+            rollover_idle_time=args.rollover_idle_time,
+            write_in_place=args.in_place)
+
     warc_writer_thread = warcprox.warcwriter.WarcWriterThread(
-            recorded_url_q=recorded_url_q, warc_writer=warc_writer,
-            rollover_idle_time=int(args.rollover_idle_time) if args.rollover_idle_time is not None else None)
+            recorded_url_q=recorded_url_q, warc_writer=warc_writer)
 
     controller = warcprox.controller.WarcproxController(proxy, warc_writer_thread, warc_writer, playback_proxy)
     controller.run_until_shutdown()
