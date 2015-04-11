@@ -318,28 +318,24 @@ class MultiWarcWriter(WarcWriter):
         self.output_dir_key = kwargs.get('output_dir', 'output_dir')
         self.writers = {}
 
+        if len(args) > 0:
+            args = args[1:]
+        else:
+            kwargs.pop('directory', '')
+
+        self.args = args
+        self.kwargs = kwargs
+
     def write_records(self, recorded_url):
         target = recorded_url.warcprox_meta.get(self.output_dir_key, 'default')
 
         new_dir = os.path.join(self.directory, target)
-        logging.info('Output Dir: ' + new_dir)
 
         if target not in self.writers:
             if not os.path.isdir(new_dir):
                 os.makedirs(new_dir)
 
-            self.writers[target] = WarcWriter(
-                directory=new_dir,
-                rollover_size=self.rollover_size,
-                gzip=self.gzip,
-                prefix=self.prefix,
-                port=self.port,
-                digest_algorithm=self.digest_algorithm,
-                base32=self.base32,
-                dedup_db=self.dedup_db,
-                playback_index_db=self.playback_index_db,
-                skip_info=self.skip_info,
-                write_in_place=self.write_in_place)
+            self.writers[target] = WarcWriter(new_dir, *self.args, **self.kwargs)
 
         self.writers[target].write_records(recorded_url)
 
