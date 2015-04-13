@@ -80,6 +80,10 @@ class WarcWriter(object):
             dedup_info = self.dedup_db.lookup(key, recorded_url)
 
         if dedup_info is not None:
+            # skip flag is set, then skip writing revisit record
+            if dedup_info.get('skip', False):
+                return None
+
             # revisit record
             recorded_url.response_recorder.tempfile.seek(0)
             if recorded_url.response_recorder.payload_offset is not None:
@@ -287,6 +291,10 @@ class WarcWriter(object):
 
     def write_records(self, recorded_url):
         recordset = self.build_warc_records(recorded_url)
+
+        # if writing was skipped, just return
+        if not recordset:
+            return
 
         writer = self._writer()
         recordset_offset = writer.tell()

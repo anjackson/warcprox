@@ -25,6 +25,7 @@ class RedisDedupDb(object):
         self.dupe_timeout = dupe_timeout
 
         self.max_size = max_size
+        self.totals_key = 'totals'
 
     def close(self):
         pass
@@ -85,15 +86,17 @@ class RedisDedupDb(object):
 
         url = recorded_url.url
 
-        if (now - dt) <= self.dupe_delta:
+        if self.dupe_timeout and (now - dt) <= self.dupe_delta:
             # skip only if urls also match, otherwise url-agnostic
             # revisit is needed
+            print('DUPE')
             if url and result['u'] == url:
-                if self.dupe_timeout:
-                    print 'DUPE ', digest
-                    result['skip'] = True
-                    dupe_key = key + ':d:' + url
-                    self.redis.setex(dupe_key, self.dupe_timeout, 1)
+                print('SKIPPING')
+                result['skip'] = True
+
+            # update redis key to indicate 'skip'
+            #dupe_key = key + ':p:' + url
+            #self.redis.setex(dupe_key, self.dupe_timeout, 1)
 
         return result
 
@@ -105,16 +108,17 @@ class RedisDedupDb(object):
         sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
 
         key = sesh
-        dupe_key = key + ':d:' + url
 
         with redis.utils.pipeline(self.redis) as pi:
             pi.hincrby(key, 'total_len', length)
             pi.hincrby(key, 'num_urls', 1)
 
-            pi.hincrby('wr_totals', 'total_len', length)
-            pi.hincrby('wr_totals', 'num_urls', 1)
+            pi.hincrby(self.totals_key, 'total_len', length)
+            pi.hincrby(self.totals_key, 'num_urls', 1)
 
-            pi.setex(dupe_key, self.dupe_timeout, 0)
+            #if pi.setnx(dupe_key, 0):
+            #    dupe_key = key + ':p:' + url
+            #    pi.expire(dupe_key, self.dupe_timeout)
 
             self._save_cdx(pi, key, url, date, response_record, recorded_url.status,
                            digest, length, offset, filename)

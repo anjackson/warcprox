@@ -125,6 +125,7 @@ def main(argv=sys.argv):
                                 args.redis_sesh_timeout,
                                 args.redis_dupe_timeout,
                                 args.redis_max_sesh_size)
+
     elif args.dedup_db_file in (None, '', '/dev/null'):
         logging.info('deduplication disabled')
         dedup_db = None
