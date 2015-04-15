@@ -249,7 +249,7 @@ class WarcWriter(object):
 
             self._fpath = os.path.sep.join([self.directory, filename])
 
-            self._f = open(self._fpath, 'wb')
+            self._f = open(self._fpath, 'w+b')
 
             if not self.skip_info:
                 warcinfo_record = self._build_warcinfo_record(self._f_finalname)
@@ -261,7 +261,7 @@ class WarcWriter(object):
         return self._f
 
 
-    def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length):
+    def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length, writer):
         # metadata record, no final tasks
         if not recorded_url.response_recorder and recorded_url.content_type:
             return
@@ -271,9 +271,7 @@ class WarcWriter(object):
         else:
             digest_key = None
 
-        if (self.dedup_db is not None
-                and recordset[0].get_header(warctools.WarcRecord.TYPE) == warctools.WarcRecord.RESPONSE
-                and recorded_url.response_recorder.payload_size() > 0):
+        if self.dedup_db is not None:
             self.dedup_db.save_digest(digest_key,
                                       recordset[0],
                                       recorded_url,
@@ -285,7 +283,8 @@ class WarcWriter(object):
                                             recorded_url,
                                             recordset_offset,
                                             record_length,
-                                            digest_key)
+                                            digest_key,
+                                            writer)
 
         recorded_url.response_recorder.tempfile.close()
 
@@ -311,7 +310,7 @@ class WarcWriter(object):
         self._f.flush()
         record_length = writer.tell() - recordset_offset
 
-        self._final_tasks(recorded_url, recordset, recordset_offset, record_length)
+        self._final_tasks(recorded_url, recordset, recordset_offset, record_length, writer)
 
         self._last_activity = time.time()
 

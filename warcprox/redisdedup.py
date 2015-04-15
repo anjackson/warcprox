@@ -9,6 +9,12 @@ from hanzo import warctools
 from itertools import imap
 from collections import OrderedDict
 
+from pywb.warc.cdxindexer import write_cdx_index
+from pywb.utils.timeutils import iso_date_to_datetime
+from pywb.utils.timeutils import timestamp_to_datetime, datetime_to_timestamp
+
+from io import BytesIO
+
 
 class RedisDedupDb(object):
     T14_STRIP = re.compile(r'[^\d]')
@@ -34,17 +40,17 @@ class RedisDedupDb(object):
         pass
 
     def save_digest(self, digest, response_record, recorded_url, offset):
+        key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
+        self.redis.setex(key + ':d:' + recorded_url.url, self.dupe_timeout, digest)
+
         if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
              warctools.WarcRecord.RESPONSE) or
             recorded_url.response_recorder.payload_size() == 0):
             return
 
-        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
-        key = sesh
-
-        record_id = response_record.get_header(warctools.WarcRecord.ID).decode('latin1')
-        url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
-        date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
+        record_id = response_record.get_header(warctools.WarcRecord.ID)
+        url = response_record.get_header(warctools.WarcRecord.URL)
+        date = response_record.get_header(warctools.WarcRecord.DATE)
 
         py_value = {'i': record_id,
                     'u': url,
@@ -57,8 +63,7 @@ class RedisDedupDb(object):
         self.logger.debug('redis dedup saved {}:{}'.format(digest, json_value))
 
     def lookup(self, digest, recorded_url=None):
-        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
-        key = sesh
+        key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
 
         if self.max_size:
             total_len = self.redis.hget(key, 'total_len')
@@ -66,9 +71,14 @@ class RedisDedupDb(object):
             if total_len >= self.max_size:
                 return dict(skip=True)
 
-
         if not digest:
             return None
+
+        # if very recent, then skip
+        recent_digest = self.redis.get(key + ':d:' + recorded_url.url)
+        if recent_digest == digest:
+            print('SKIPPING RECENT')
+            return dict(skip=True)
 
         json_result = self.redis.hget(key, digest)
 
@@ -77,37 +87,18 @@ class RedisDedupDb(object):
 
         result = json.loads(json_result.decode('utf-8'))
 
-        result['i'] = result['i'].encode('latin1')
-        result['u'] = result['u'].encode('latin1')
-        result['d'] = result['d'].encode('latin1')
-
-        dt = self.iso_date_to_datetime(result['d'])
-        now = datetime.now()
-
-        url = recorded_url.url
-
-        if self.dupe_timeout and (now - dt) <= self.dupe_delta:
-            # skip only if urls also match, otherwise url-agnostic
-            # revisit is needed
-            print('DUPE')
-            if url and result['u'] == url:
-                print('SKIPPING')
-                result['skip'] = True
-
-            # update redis key to indicate 'skip'
-            #dupe_key = key + ':p:' + url
-            #self.redis.setex(dupe_key, self.dupe_timeout, 1)
+        #result['i'] = result['i'].encode('latin1')
+        #result['u'] = result['u'].encode('latin1')
+        #result['d'] = result['d'].encode('latin1')
 
         return result
 
     #def save_url(self, digest, response_record, offset, length, filename, recorded_url):
-    def save_url(self, filename, response_record, recorded_url, offset, length, digest):
+    def save_url(self, filename, response_record, recorded_url, offset, length, digest, writer):
         url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
         date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
 
-        sesh = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
-
-        key = sesh
+        key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
 
         with redis.utils.pipeline(self.redis) as pi:
             pi.hincrby(key, 'total_len', length)
@@ -120,10 +111,36 @@ class RedisDedupDb(object):
             #    dupe_key = key + ':p:' + url
             #    pi.expire(dupe_key, self.dupe_timeout)
 
-            self._save_cdx(pi, key, url, date, response_record, recorded_url.status,
-                           digest, length, offset, filename)
+            #self._save_cdx(pi, key, url, date, response_record,
+            #               writer,
+            #               recorded_url.status,
+            #               digest, length, offset, filename)
+            self._save_cdx(pi, key, writer, offset, filename)
 
-    def _save_cdx(self, pi, key, url, date, response_record, status,
+    def _save_cdx(self, pi, key, recfile, offset, filename):
+        outfile = BytesIO()
+
+        recfile.seek(offset)
+
+        write_cdx_index(outfile,
+                        recfile,
+                        filename,
+                        append_post=True,
+                        cdxj=True)
+
+        recfile.seek(0, 2)
+
+        key = 'cdxj:' + key
+
+        value = outfile.getvalue()
+
+        for cdx in value.split('\n'):
+            pi.zadd(key, 0, value)
+            if self.sesh_timeout > 0:
+                pi.expire(key, self.sesh_timeout)
+
+    def _save_cdx_dir(self, pi, key, url, date, response_record,
+                  recfile, status,
                   digest, length, offset, filename):
 
         url_key = surt.surt(url)
@@ -151,17 +168,10 @@ class RedisDedupDb(object):
         date = self.T14_STRIP.sub('', date)
 
         value = url_key + ' ' + date + ' ' + json.dumps(cdx)
+
         #value = '{} {} {} {} {} {} - - {} {} {}'.format(url_key, date, url, mimetype, status, digest, length, offset, filename)
 
         #self.redis.rpush(key, value)
         pi.zadd(key, 0, value)
         if self.sesh_timeout > 0:
             pi.expire(key, self.sesh_timeout)
-
-    def iso_date_to_datetime(self, string):
-        nums = self.T14_STRIP.split(string)
-        if nums[-1] == '':
-            nums = nums[:-1]
-
-        the_datetime = datetime(*imap(int, nums))
-        return the_datetime
