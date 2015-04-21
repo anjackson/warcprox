@@ -14,6 +14,7 @@ import hashlib
 import time
 import socket
 import base64
+import fcntl
 from datetime import datetime
 import hanzo.httptools
 from hanzo import warctools
@@ -199,6 +200,8 @@ class WarcWriter(object):
     def close_writer(self):
         if self._fpath:
             self.logger.info('closing {0}'.format(self._f_finalname))
+            if self.write_in_place:
+                fcntl.flock(self._f, fcntl.LOCK_UN)
             self._f.close()
             if not self.write_in_place:
                 finalpath = os.path.sep.join([self.directory, self._f_finalname])
@@ -221,7 +224,11 @@ class WarcWriter(object):
         warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
         hostname = socket.gethostname()
         warcinfo_fields.append('hostname: {}'.format(hostname).encode('latin1'))
-        warcinfo_fields.append('ip: {0}'.format(socket.gethostbyname(hostname)).encode('latin1'))
+        try:
+            host_ip = socket.gethostbyname(hostname)
+        except:
+            host_ip = '127.0.0.1'
+        warcinfo_fields.append('ip: {0}'.format(host_ip.encode('latin1')))
         warcinfo_fields.append(b'format: WARC File Format 1.0')
         # warcinfo_fields.append('robots: ignore')
         # warcinfo_fields.append('description: {0}'.format(self.description))
@@ -234,7 +241,7 @@ class WarcWriter(object):
 
 
     # <!-- <property name="template" value="${prefix}-${timestamp17}-${serialno}-${heritrix.pid}~${heritrix.hostname}~${heritrix.port}" /> -->
-    def _writer(self):
+    def _writer(self, warcprox_meta):
         if self._fpath and os.path.getsize(self._fpath) > self.rollover_size:
             self.close_writer()
 
@@ -250,6 +257,11 @@ class WarcWriter(object):
             self._fpath = os.path.sep.join([self.directory, filename])
 
             self._f = open(self._fpath, 'w+b')
+            if self.write_in_place:
+                fcntl.flock(self._f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if self.playback_index_db and hasattr(self.playback_index_db, 'on_init_file'):
+                    filename = os.path.basename(self._fpath)
+                    self.playback_index_db.on_init_file(filename, warcprox_meta)
 
             if not self.skip_info:
                 warcinfo_record = self._build_warcinfo_record(self._f_finalname)
@@ -295,7 +307,7 @@ class WarcWriter(object):
         if not recordset:
             return
 
-        writer = self._writer()
+        writer = self._writer(recorded_url.warcprox_meta)
         recordset_offset = writer.tell()
 
         for record in recordset:
@@ -307,7 +319,7 @@ class WarcWriter(object):
                     record.get_header(warctools.WarcRecord.URL),
                     self._fpath, offset))
 
-        self._f.flush()
+        writer.flush()
         record_length = writer.tell() - recordset_offset
 
         self._final_tasks(recorded_url, recordset, recordset_offset, record_length, writer)

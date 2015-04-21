@@ -115,9 +115,9 @@ class RedisDedupDb(object):
             #               writer,
             #               recorded_url.status,
             #               digest, length, offset, filename)
-            self._save_cdx(pi, key, writer, offset, filename)
+            self._save_cdx(pi, key, url, writer, offset, filename)
 
-    def _save_cdx(self, pi, key, recfile, offset, filename):
+    def _save_cdx(self, pi, key, url, recfile, offset, filename):
         outfile = BytesIO()
 
         recfile.seek(offset)
@@ -130,14 +130,26 @@ class RedisDedupDb(object):
 
         recfile.seek(0, 2)
 
-        key = 'cdxj:' + key
+        cdx_key = 'cdxj:' + key
 
         value = outfile.getvalue()
 
+        added = False
         for cdx in value.split('\n'):
-            pi.zadd(key, 0, value)
+            pi.zadd(cdx_key, 0, value)
+            added = True
             if self.sesh_timeout > 0:
-                pi.expire(key, self.sesh_timeout)
+                pi.expire(cdx_key, self.sesh_timeout)
+
+        #pi.hset('warc:' + key, filename, filename)
+
+        if not added:
+            self.logger.error('** No cdx added for: ' + url)
+
+    def on_init_file(self, filename, warcprox_meta):
+        key = warcprox_meta.get(self.sesh_key, 'default')
+        print(key, filename)
+        self.redis.hset('warc:' + key, filename, filename)
 
     def _save_cdx_dir(self, pi, key, url, date, response_record,
                   recfile, status,
