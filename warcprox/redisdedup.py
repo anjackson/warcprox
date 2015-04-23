@@ -101,6 +101,7 @@ class RedisDedupDb(object):
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
 
         with redis.utils.pipeline(self.redis) as pi:
+            pi.hincrby(key, 'warc_len', length)
             pi.hincrby(key, 'total_len', length)
             pi.hincrby(key, 'num_urls', 1)
 
@@ -148,9 +149,9 @@ class RedisDedupDb(object):
 
     def on_init_file(self, filename, warcprox_meta):
         key = warcprox_meta.get(self.sesh_key, 'default')
-        print(key, filename)
-        self.redis.hset('warc:' + key, filename, filename)
 
+        self.redis.hset('warc:' + key, filename, filename)
+        self.redis.hset(key, 'warc_len', 0)
     def _save_cdx_dir(self, pi, key, url, date, response_record,
                   recfile, status,
                   digest, length, offset, filename):
