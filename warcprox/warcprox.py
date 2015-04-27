@@ -161,7 +161,7 @@ class WarcProxyHandler(MitmProxyHandler):
         # Build request
         req_str = '{} {} {}\r\n'.format(self.command, self.path, self.request_version)
 
-        warcprox_meta = self.headers.get('X-Warcprox-Meta')
+        warcprox_meta = self.headers.get('Warcprox-Meta')
 
         # Swallow headers that don't make sense to forward on, i.e. most
         # hop-by-hop headers, see http://tools.ietf.org/html/rfc2616#section-13.5
@@ -169,7 +169,7 @@ class WarcProxyHandler(MitmProxyHandler):
         # and doesn't throw KeyError in __delitem__
         for h in ('Connection', 'Proxy-Connection', 'Keep-Alive',
                 'Proxy-Authenticate', 'Proxy-Authorization', 'Upgrade',
-                'X-Warcprox-Meta'):
+                'Warcprox-Meta'):
             del self.headers[h]
 
         # Add headers to the request
