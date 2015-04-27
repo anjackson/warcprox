@@ -83,6 +83,10 @@ class RedisDedupDb(object):
         if not digest:
             return None
 
+        if recorded_url and recorded_url.command != 'GET':
+            print('Skip dedup of: ' + str(recorded_url.command))
+            return None
+
         # if very recent, then skip
         recent_digest = self.redis.get(key + self.DEDUP_URL_KEY + recorded_url.url)
         if recent_digest == digest:
