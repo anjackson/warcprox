@@ -19,6 +19,14 @@ from io import BytesIO
 class RedisDedupDb(object):
     T14_STRIP = re.compile(r'[^\d]')
 
+    DEDUP_KEY = ':d'
+    DEDUP_URL_KEY = ':d:'
+    CDX_KEY = ':cdxj'
+    WARC_KEY = ':warc'
+    DONE_WARC_KEY = ':warc:done'
+
+    TOTALS = 'h:totals'
+
     def __init__(self, redis_url, sesh_timeout,
                  dupe_timeout, max_size, sesh_key='sesh_id'):
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -31,7 +39,7 @@ class RedisDedupDb(object):
         self.dupe_timeout = dupe_timeout
 
         self.max_size = max_size
-        self.totals_key = 'totals'
+        self.totals_key = self.TOTALS
 
     def close(self):
         pass
@@ -41,7 +49,7 @@ class RedisDedupDb(object):
 
     def save_digest(self, digest, response_record, recorded_url, offset):
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
-        self.redis.setex(key + ':d:' + recorded_url.url, self.dupe_timeout, digest)
+        self.redis.setex(key + self.DEDUP_URL_KEY + recorded_url.url, self.dupe_timeout, digest)
 
         if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
              warctools.WarcRecord.RESPONSE) or
@@ -58,15 +66,16 @@ class RedisDedupDb(object):
 
         json_value = json.dumps(py_value, separators=(',',':'))
 
-        self.redis.hset(key, digest, json_value.encode('utf-8'))
+        self.redis.hset(key + self.DEDUP_KEY, digest, json_value.encode('utf-8'))
 
         self.logger.debug('redis dedup saved {}:{}'.format(digest, json_value))
 
     def lookup(self, digest, recorded_url=None):
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
+        dedup_key = key + self.DEDUP_KEY
 
         if self.max_size:
-            total_len = self.redis.hget(key, 'total_len')
+            total_len = self.redis.hget(dedup_key, 'total_len')
             total_len = int(total_len) if total_len else 0
             if total_len >= self.max_size:
                 return dict(skip=True)
@@ -75,12 +84,12 @@ class RedisDedupDb(object):
             return None
 
         # if very recent, then skip
-        recent_digest = self.redis.get(key + ':d:' + recorded_url.url)
+        recent_digest = self.redis.get(key + self.DEDUP_URL_KEY + recorded_url.url)
         if recent_digest == digest:
             print('SKIPPING RECENT')
             return dict(skip=True)
 
-        json_result = self.redis.hget(key, digest)
+        json_result = self.redis.hget(dedup_key, digest)
 
         if not json_result:
             return None
@@ -99,11 +108,12 @@ class RedisDedupDb(object):
         date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
 
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
+        dedup_key = key + self.DEDUP_KEY
 
         with redis.utils.pipeline(self.redis) as pi:
-            pi.hincrby(key, 'warc_len', length)
-            pi.hincrby(key, 'total_len', length)
-            pi.hincrby(key, 'num_urls', 1)
+            pi.hincrby(dedup_key, 'warc_len', length)
+            pi.hincrby(dedup_key, 'total_len', length)
+            pi.hincrby(dedup_key, 'num_urls', 1)
 
             pi.hincrby(self.totals_key, 'total_len', length)
             pi.hincrby(self.totals_key, 'num_urls', 1)
@@ -131,7 +141,7 @@ class RedisDedupDb(object):
 
         recfile.seek(0, 2)
 
-        cdx_key = 'cdxj:' + key
+        cdx_key = key + self.CDX_KEY
 
         value = outfile.getvalue()
 
@@ -150,15 +160,15 @@ class RedisDedupDb(object):
     def on_init_file(self, filename, warcprox_meta):
         key = warcprox_meta.get(self.sesh_key, 'default')
 
-        self.redis.hset('warc:' + key, filename, filename)
-        self.redis.hset(key, 'warc_len', 0)
+        self.redis.hset(key + self.WARC_KEY, filename, filename)
+        self.redis.hset(key + self.DEDUP_KEY, 'warc_len', 0)
     def _save_cdx_dir(self, pi, key, url, date, response_record,
                   recfile, status,
                   digest, length, offset, filename):
 
         url_key = surt.surt(url)
 
-        key = 'cdxj:' + key
+        cdx_key = key + self.CDX_KEY
 
         if (response_record.get_header(warctools.WarcRecord.TYPE) ==
             warctools.WarcRecord.REVISIT):
