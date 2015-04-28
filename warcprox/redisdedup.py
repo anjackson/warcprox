@@ -115,21 +115,14 @@ class RedisDedupDb(object):
         dedup_key = key + self.DEDUP_KEY
 
         with redis.utils.pipeline(self.redis) as pi:
-            pi.hincrby(dedup_key, 'warc_len', length)
-            pi.hincrby(dedup_key, 'total_len', length)
-            pi.hincrby(dedup_key, 'num_urls', 1)
+            if recorded_url.response_recorder:
+                pi.hincrby(dedup_key, 'warc_len', length)
+                pi.hincrby(dedup_key, 'total_len', length)
+                pi.hincrby(dedup_key, 'num_urls', 1)
 
-            pi.hincrby(self.totals_key, 'total_len', length)
-            pi.hincrby(self.totals_key, 'num_urls', 1)
+                pi.hincrby(self.totals_key, 'total_len', length)
+                pi.hincrby(self.totals_key, 'num_urls', 1)
 
-            #if pi.setnx(dupe_key, 0):
-            #    dupe_key = key + ':p:' + url
-            #    pi.expire(dupe_key, self.dupe_timeout)
-
-            #self._save_cdx(pi, key, url, date, response_record,
-            #               writer,
-            #               recorded_url.status,
-            #               digest, length, offset, filename)
             self._save_cdx(pi, key, url, writer, offset, filename)
 
     def _save_cdx(self, pi, key, url, recfile, offset, filename):

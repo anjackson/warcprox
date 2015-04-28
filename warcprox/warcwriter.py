@@ -274,20 +274,16 @@ class WarcWriter(object):
 
 
     def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length, writer):
-        # metadata record, no final tasks
-        if not recorded_url.response_recorder and recorded_url.content_type:
-            return
+        digest_key = None
+        if recorded_url.response_recorder or not recorded_url.content_type:
+            if self.dedup_db or self.playback_index_db:
+                digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
 
-        if self.dedup_db or self.playback_index_db:
-            digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
-        else:
-            digest_key = None
-
-        if self.dedup_db is not None:
-            self.dedup_db.save_digest(digest_key,
-                                      recordset[0],
-                                      recorded_url,
-                                      recordset_offset)
+            if self.dedup_db is not None:
+                self.dedup_db.save_digest(digest_key,
+                                          recordset[0],
+                                          recorded_url,
+                                          recordset_offset)
 
         if self.playback_index_db is not None:
             self.playback_index_db.save_url(self._f_finalname,
@@ -298,7 +294,8 @@ class WarcWriter(object):
                                             digest_key,
                                             writer)
 
-        recorded_url.response_recorder.tempfile.close()
+        if recorded_url.response_recorder:
+            recorded_url.response_recorder.tempfile.close()
 
     def write_records(self, recorded_url):
         recordset = self.build_warc_records(recorded_url)
