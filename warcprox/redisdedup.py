@@ -28,11 +28,13 @@ class RedisDedupDb(object):
     TOTALS = 'h:totals'
 
     def __init__(self, redis_url, sesh_timeout,
-                 dupe_timeout, max_size, sesh_key='sesh_id'):
+                 dupe_timeout, max_size, sesh_key='sesh_id',
+                 user_id='user_id'):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.redis_url = redis_url
         self.redis = redis.StrictRedis.from_url(redis_url)
         self.sesh_key = sesh_key
+        self.user_id = user_id
 
         self.sesh_timeout = sesh_timeout
         self.dupe_delta = timedelta(seconds=dupe_timeout)
@@ -114,11 +116,14 @@ class RedisDedupDb(object):
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
         dedup_key = key + self.DEDUP_KEY
 
+        user_id = recorded_url.warcprox_meta.get(self.user_id, 'default')
+
         with redis.utils.pipeline(self.redis) as pi:
             if recorded_url.response_recorder:
-                pi.hincrby(dedup_key, 'warc_len', length)
                 pi.hincrby(dedup_key, 'total_len', length)
                 pi.hincrby(dedup_key, 'num_urls', 1)
+
+                pi.hincrby(user_id, 'total_len', length)
 
                 pi.hincrby(self.totals_key, 'total_len', length)
                 pi.hincrby(self.totals_key, 'num_urls', 1)
@@ -158,7 +163,8 @@ class RedisDedupDb(object):
         key = warcprox_meta.get(self.sesh_key, 'default')
 
         self.redis.hset(key + self.WARC_KEY, filename, filename)
-        self.redis.hset(key + self.DEDUP_KEY, 'warc_len', 0)
+        #self.redis.hset(key + self.DEDUP_KEY, 'warc_len', 0)
+
     def _save_cdx_dir(self, pi, key, url, date, response_record,
                   recfile, status,
                   digest, length, offset, filename):
