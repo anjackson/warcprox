@@ -177,6 +177,10 @@ def main(argv=sys.argv):
     warc_writer_thread = warcprox.warcwriter.WarcWriterThread(
             recorded_url_q=recorded_url_q, warc_writer=warc_writer)
 
+    if args.multiwarc and args.redis_dedup_url:
+        warc_closer_thread = warcprox.warcwriter.CloseAndDeleteCollThread(warc_writer, dedup_db.redis)
+        warc_closer_thread.start()
+
     controller = warcprox.controller.WarcproxController(proxy, warc_writer_thread, warc_writer, playback_proxy)
     controller.run_until_shutdown()
 

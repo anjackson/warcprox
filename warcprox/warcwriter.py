@@ -15,6 +15,7 @@ import time
 import socket
 import base64
 import fcntl
+import shutil
 from datetime import datetime
 import hanzo.httptools
 from hanzo import warctools
@@ -366,6 +367,19 @@ class MultiWarcWriter(WarcWriter):
 
         self.writers = {}
 
+    def close_coll_writer_and_delete(self, output_dir):
+        try:
+            writer = self.writers.pop(output_dir)
+            writer.close_writer()
+        except KeyError:
+            pass
+
+        parent_dir = os.path.dirname(output_dir.rstrip(os.path.sep))
+        if os.path.isdir(parent_dir):
+            print('*** Deleting: ' + parent_dir)
+            shutil.rmtree(parent_dir)
+            return True
+
 
 class WarcWriterThread(threading.Thread):
     logger = logging.getLogger("warcprox.warcwriter.WarcWriterThread")
@@ -406,3 +420,16 @@ class WarcWriterThread(threading.Thread):
         self.warc_writer.close_writer();
 
 
+class CloseAndDeleteCollThread(threading.Thread):
+    def __init__(self, multiwriter, redis):
+        threading.Thread.__init__(self, name='CloseAndDeleteCollThread')
+        self.multiwriter = multiwriter
+        self.redis = redis
+        self.pubsub = self.redis.pubsub()
+        self.pubsub.subscribe('delete_coll')
+        self.daemon = True
+
+    def run(self):
+        for item in self.pubsub.listen():
+            if item['type'] == 'message':
+                self.multiwriter.close_coll_writer_and_delete(item['data'])
