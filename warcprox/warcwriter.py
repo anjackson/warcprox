@@ -343,6 +343,8 @@ class MultiWarcWriter(WarcWriter):
         self.args = args
         self.kwargs = kwargs
 
+        self.abs_dir = os.path.abspath(self.directory)
+
     def write_records(self, recorded_url):
         target = recorded_url.warcprox_meta.get(self.output_dir_key, 'default')
 
@@ -375,9 +377,18 @@ class MultiWarcWriter(WarcWriter):
             pass
 
         parent_dir = os.path.dirname(output_dir.rstrip(os.path.sep))
-        if os.path.isdir(parent_dir):
-            print('*** Deleting: ' + parent_dir)
-            shutil.rmtree(parent_dir)
+        self.delete_dir(parent_dir)
+
+    def delete_dir(self, dir_):
+        dir_ = os.path.abspath(dir_)
+        common = os.path.commonprefix([self.abs_dir, dir_])
+        if not common.startswith(self.abs_dir):
+            print('Attempt to delete invalid path: ' + dir_)
+            return False
+
+        if os.path.isdir(dir_):
+            print('*** Deleting: ' + dir_)
+            shutil.rmtree(dir_)
             return True
 
 
@@ -426,10 +437,14 @@ class CloseAndDeleteCollThread(threading.Thread):
         self.multiwriter = multiwriter
         self.redis = redis
         self.pubsub = self.redis.pubsub()
-        self.pubsub.subscribe('delete_coll')
+        self.pubsub.subscribe(['delete_coll', 'delete_user'])
         self.daemon = True
 
     def run(self):
         for item in self.pubsub.listen():
+            print(item)
             if item['type'] == 'message':
-                self.multiwriter.close_coll_writer_and_delete(item['data'])
+                if item['channel'] == 'delete_coll':
+                    self.multiwriter.close_coll_writer_and_delete(item['data'])
+                elif item['channel'] == 'delete_user':
+                    self.multiwriter.delete_dir(item['data'])
