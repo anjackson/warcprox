@@ -222,7 +222,8 @@ class WarcWriter(object):
         headers.append((warctools.WarcRecord.DATE, warc_record_date))
 
         warcinfo_fields = []
-        warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
+        #warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
+        warcinfo_fields.append(b'software: webrecorder.io 2.0 (warcprox ' + warcprox.version_bytes + ')')
         hostname = socket.gethostname()
         warcinfo_fields.append('hostname: {}'.format(hostname).encode('latin1'))
         try:
