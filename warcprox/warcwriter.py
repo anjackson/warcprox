@@ -70,10 +70,18 @@ class WarcWriter(object):
         dedup_info = None
 
         # metadata special case
-        if not recorded_url.response_recorder and recorded_url.content_type:
+        if recorded_url.custom_type == 'metadata':
             metadata_rec = self.build_warc_record(url=recorded_url.url,
                                                   data=recorded_url.request_data,
                                                   warc_type=warctools.WarcRecord.METADATA,
+                                                  content_type=recorded_url.content_type)
+            return [metadata_rec]
+
+        # resource special case
+        if recorded_url.custom_type == 'resource':
+            metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  data=recorded_url.request_data,
+                                                  warc_type=warctools.WarcRecord.RESOURCE,
                                                   content_type=recorded_url.content_type)
             return [metadata_rec]
 
@@ -277,7 +285,9 @@ class WarcWriter(object):
 
     def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length, writer):
         digest_key = None
-        if recorded_url.response_recorder or not recorded_url.content_type:
+
+        # digest only for non custom types?
+        if not recorded_url.custom_type and recorded_url.response_recorder:
             if self.dedup_db or self.playback_index_db:
                 digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
 
