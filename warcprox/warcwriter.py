@@ -256,8 +256,14 @@ class WarcWriter(object):
             self.close_writer()
 
         if self._f == None:
+            prefix = warcprox_meta.get('sesh_id')
+            if prefix:
+                prefix = prefix.replace(':', '-')
+            else:
+                prefix = self.prefix
+
             self._f_finalname = '{}-{}-{:05d}-{}-{}-{}.warc{}'.format(
-                    self.prefix, self.timestamp17(), self._serial, os.getpid(),
+                    prefix, self.timestamp17(), self._serial, os.getpid(),
                     socket.gethostname(), self.port, '.gz' if self.gzip else '')
 
             filename = self._f_finalname
