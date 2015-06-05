@@ -66,26 +66,39 @@ class WarcWriter(object):
 
     # returns a tuple (principal_record, request_record) where principal_record is either a response or revisit record
     def build_warc_records(self, recorded_url):
-        warc_date = warctools.warc.warc_datetime_str(datetime.utcnow())
+        warc_json_metadata = recorded_url.warcprox_meta.get('json_metadata')
+
+        dt = None
+        if warc_json_metadata:
+            timestamp = warc_json_metadata.pop('timestamp', '')
+            if timestamp:
+                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+
+        if not dt:
+            dt = datetime.utcnow()
+
+        warc_date = warctools.warc.warc_datetime_str(dt)
 
         dedup_info = None
 
         # metadata special case
         if recorded_url.custom_type == 'metadata':
             metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  warc_date=warc_date,
                                                   data=recorded_url.request_data,
                                                   warc_type=warctools.WarcRecord.METADATA,
                                                   content_type=recorded_url.content_type,
-                                                  warc_json_metadata=recorded_url.warcprox_meta.get('json_metadata'))
+                                                  warc_json_metadata=warc_json_metadata)
             return [metadata_rec]
 
         # resource special case
         if recorded_url.custom_type == 'resource':
             metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  warc_date=warc_date,
                                                   data=recorded_url.request_data,
                                                   warc_type=warctools.WarcRecord.RESOURCE,
                                                   content_type=recorded_url.content_type,
-                                                  warc_json_metadata=recorded_url.warcprox_meta.get('json_metadata'))
+                                                  warc_json_metadata=warc_json_metadata)
             return [metadata_rec]
 
         if self.dedup_db is not None and recorded_url.response_recorder.payload_digest is not None:
