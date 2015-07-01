@@ -19,22 +19,13 @@ import ssl
 class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
     # no way to pass through constructor, so making these static
     warcprox_buff_size = 16384
-    warcprox_timeout = 10
+    warcprox_timeout = 60
 
     logger = logging.getLogger("warcprox.mitmproxy.MitmProxyHandler")
 
     def __init__(self, request, client_address, server):
         self.is_connect = False
-
-        ## XXX hack around bizarre bug on my mac python 3.2 in http.server
-        ## where hasattr returns true in the code snippet below, but
-        ## self._headers_buffer is None
-        #
-        # if not hasattr(self, '_headers_buffer'):
-        #     self._headers_buffer = []
-        # self._headers_buffer.append(
         self._headers_buffer = []
-
         http_server.BaseHTTPRequestHandler.__init__(self, request, client_address, server)
 
     def _determine_host_port(self):
@@ -67,7 +58,17 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
 
         # Wrap socket if SSL is required
         if self.is_connect:
-            self._proxy_sock = ssl.wrap_socket(self._proxy_sock)
+            try:
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                self._proxy_sock = context.wrap_socket(self._proxy_sock, server_hostname=self.hostname)
+            except AttributeError:
+                try:
+                    self._proxy_sock = ssl.wrap_socket(self._proxy_sock)
+                except ssl.SSLError:
+                    self.logger.warn("failed to establish ssl connection to {}; python ssl library does not support SNI, considering upgrading to python >= 2.7.9 or python 3.4".format(self.hostname))
+                    raise
 
     def _transition_to_ssl(self):
         # if hostname is too long, only use last 64 parts of name
@@ -87,7 +88,13 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
             self.end_headers()
             self._transition_to_ssl()
         except Exception as e:
-            self.send_error(500, str(e))
+            try:
+                if type(e) is socket.timeout:
+                    self.send_error(504, str(e))
+                else:
+                    self.send_error(500, str(e))
+            except Exception as f:
+                self.logger.warn("failed to send error response ({}) to proxy client: {}".format(e, f))
             return
 
         # Reload!
