@@ -190,7 +190,7 @@ class WarcProxyHandler(MitmProxyHandler):
         # Build request
         req_str = '{} {} {}\r\n'.format(self.command, self.path, self.request_version)
 
-        warcprox_meta = self.headers.get('X-Warcprox-Meta')
+        warcprox_meta = self.headers.get('Warcprox-Meta')
 
         # Swallow headers that don't make sense to forward on, i.e. most
         # hop-by-hop headers, see http://tools.ietf.org/html/rfc2616#section-13.5
@@ -249,35 +249,43 @@ class WarcProxyHandler(MitmProxyHandler):
 
         recorded_url = RecordedUrl(url=self.url, request_data=req,
                 response_recorder=h.recorder, remote_ip=remote_ip,
-                warcprox_meta=warcprox_meta, status=h.status)
+                warcprox_meta=warcprox_meta, status=h.status,
+                command=self.command)
+
         self.server.recorded_url_q.put(recorded_url)
 
-    def _handle_putmeta(self):
-        metadata = ''
-        # use custom metadata scheme
-        self.url = self.path.replace('http:/', 'metadata:/')
+    def _handle_custom_record(self, type_):
+        request_data = ''
+
+        if type_ == 'metadata':
+            # use custom metadata scheme
+            self.url = self.path.replace('http:/', 'metadata:/')
+        else:
+            self.url = self.path
 
         if 'Content-Length' in self.headers and 'Content-Type' in self.headers:
-            metadata += self.rfile.read(int(self.headers['Content-Length']))
+            request_data += self.rfile.read(int(self.headers['Content-Length']))
 
             warcprox_meta = self.headers.get('Warcprox-Meta')
 
-            rec_metadata = RecordedUrl(url=self.url,
-                                       request_data=metadata,
-                                       response_recorder=None,
-                                       remote_ip=b'',
-                                       warcprox_meta=warcprox_meta,
-                                       content_type=self.headers['Content-Type'])
+            rec_custom = RecordedUrl(url=self.url,
+                                     request_data=request_data,
+                                     response_recorder=None,
+                                     remote_ip=b'',
+                                     warcprox_meta=warcprox_meta,
+                                     content_type=self.headers['Content-Type'],
+                                     custom_type=type_)
 
-            self.server.recorded_url_q.put(rec_metadata)
+            self.server.recorded_url_q.put(rec_custom)
 
-        #self.logger.info('PUTMETA: ' + metadata)
         self.send_response(204, 'OK')
         self.end_headers()
 
+
 class RecordedUrl(object):
     def __init__(self, url, request_data, response_recorder, remote_ip,
-                 warcprox_meta=None, status=None, content_type=''):
+                 warcprox_meta=None, status=None, content_type='', command='',
+                 custom_type=None):
         # XXX should test what happens with non-ascii url (when does
         # url-encoding happen?)
         if type(url) is not bytes:
@@ -309,6 +317,10 @@ class RecordedUrl(object):
         self.status = status
 
         self.content_type = content_type
+
+        self.command = command.upper()
+
+        self.custom_type = custom_type
 
 class PooledMixIn(socketserver.ThreadingMixIn):
     def process_request(self, request, client_address):

@@ -14,10 +14,13 @@ import hashlib
 import time
 import socket
 import base64
+import fcntl
+import shutil
 from datetime import datetime
 import hanzo.httptools
 from hanzo import warctools
 import warcprox
+import json
 
 class WarcWriter(object):
     logger = logging.getLogger("warcprox.warcwriter.WarcWriter")
@@ -63,16 +66,42 @@ class WarcWriter(object):
 
     # returns a tuple (principal_record, request_record) where principal_record is either a response or revisit record
     def build_warc_records(self, recorded_url):
-        warc_date = warctools.warc.warc_datetime_str(recorded_url.datetime)
+        warc_json_metadata = recorded_url.warcprox_meta.get('json_metadata')
+
+        dt = None
+        if warc_json_metadata:
+            timestamp = warc_json_metadata.pop('timestamp', '')
+            if timestamp:
+                dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
+
+        if not dt:
+            dt = recorded_url.datetime
+
+        if not dt:
+            dt = datetime.utcnow()
+
+        warc_date = warctools.warc.warc_datetime_str(dt)
 
         dedup_info = None
 
         # metadata special case
-        if not recorded_url.response_recorder and recorded_url.content_type:
+        if recorded_url.custom_type == 'metadata':
             metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  warc_date=warc_date,
                                                   data=recorded_url.request_data,
                                                   warc_type=warctools.WarcRecord.METADATA,
-                                                  content_type=recorded_url.content_type)
+                                                  content_type=recorded_url.content_type,
+                                                  warc_json_metadata=warc_json_metadata)
+            return [metadata_rec]
+
+        # resource special case
+        if recorded_url.custom_type == 'resource':
+            metadata_rec = self.build_warc_record(url=recorded_url.url,
+                                                  warc_date=warc_date,
+                                                  data=recorded_url.request_data,
+                                                  warc_type=warctools.WarcRecord.RESOURCE,
+                                                  content_type=recorded_url.content_type,
+                                                  warc_json_metadata=warc_json_metadata)
             return [metadata_rec]
 
         if self.dedup_db is not None and recorded_url.response_recorder.payload_digest is not None:
@@ -80,6 +109,10 @@ class WarcWriter(object):
             dedup_info = self.dedup_db.lookup(key, recorded_url)
 
         if dedup_info is not None:
+            # skip flag is set, then skip writing revisit record
+            if dedup_info.get('skip', False):
+                return None
+
             # revisit record
             recorded_url.response_recorder.tempfile.seek(0)
             if recorded_url.response_recorder.payload_offset is not None:
@@ -124,7 +157,7 @@ class WarcWriter(object):
     def build_warc_record(self, url, warc_date=None, recorder=None, data=None,
         concurrent_to=None, warc_type=None, content_type=None, remote_ip=None,
         profile=None, refers_to=None, refers_to_target_uri=None,
-        refers_to_date=None, payload_digest=None):
+        refers_to_date=None, payload_digest=None, warc_json_metadata=None):
 
         if warc_date is None:
             warc_date = warctools.warc.warc_datetime_str(datetime.utcnow())
@@ -153,6 +186,9 @@ class WarcWriter(object):
             headers.append((warctools.WarcRecord.CONTENT_TYPE, content_type))
         if payload_digest is not None:
             headers.append((warctools.WarcRecord.PAYLOAD_DIGEST, payload_digest))
+        if warc_json_metadata is not None:
+            print('WARC Metadata: ', warc_json_metadata)
+            headers.append(('WARC-Json-Metadata', json.dumps(warc_json_metadata)))
 
         if recorder is not None:
             headers.append((warctools.WarcRecord.CONTENT_LENGTH, str(len(recorder)).encode('latin1')))
@@ -195,6 +231,8 @@ class WarcWriter(object):
     def close_writer(self):
         if self._fpath:
             self.logger.info('closing {0}'.format(self._f_finalname))
+            if self.write_in_place:
+                fcntl.flock(self._f, fcntl.LOCK_UN)
             self._f.close()
             if not self.write_in_place:
                 finalpath = os.path.sep.join([self.directory, self._f_finalname])
@@ -214,10 +252,15 @@ class WarcWriter(object):
         headers.append((warctools.WarcRecord.DATE, warc_record_date))
 
         warcinfo_fields = []
-        warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
+        #warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
+        warcinfo_fields.append(b'software: webrecorder.io 2.0 (warcprox ' + warcprox.version_bytes + ')')
         hostname = socket.gethostname()
         warcinfo_fields.append('hostname: {}'.format(hostname).encode('latin1'))
-        warcinfo_fields.append('ip: {0}'.format(socket.gethostbyname(hostname)).encode('latin1'))
+        try:
+            host_ip = socket.gethostbyname(hostname)
+        except:
+            host_ip = '127.0.0.1'
+        warcinfo_fields.append('ip: {0}'.format(host_ip.encode('latin1')))
         warcinfo_fields.append(b'format: WARC File Format 1.0')
         # warcinfo_fields.append('robots: ignore')
         # warcinfo_fields.append('description: {0}'.format(self.description))
@@ -230,14 +273,22 @@ class WarcWriter(object):
 
 
     # <!-- <property name="template" value="${prefix}-${timestamp17}-${serialno}-${heritrix.pid}~${heritrix.hostname}~${heritrix.port}" /> -->
-    def _writer(self):
+    def _writer(self, warcprox_meta):
         if self._fpath and os.path.getsize(self._fpath) > self.rollover_size:
             self.close_writer()
 
         if self._f == None:
-            self._f_finalname = '{}-{}-{:05d}-{}-{}-{}.warc{}'.format(
-                    self.prefix, self.timestamp17(), self._serial, os.getpid(),
-                    socket.gethostname(), self.port, '.gz' if self.gzip else '')
+            prefix = warcprox_meta.get('sesh_id')
+            if prefix:
+                prefix = prefix.replace(':', '-')
+            else:
+                prefix = self.prefix
+
+            writer_type = warcprox_meta.get('writer_type', '')
+
+            self._f_finalname = '{}-{}-{:05d}-{}-{}{}.warc{}'.format(
+                    prefix, self.timestamp17(), self._serial, os.getpid(),
+                    socket.gethostname(), writer_type, '.gz' if self.gzip else '')
 
             filename = self._f_finalname
             if not self.write_in_place:
@@ -245,7 +296,12 @@ class WarcWriter(object):
 
             self._fpath = os.path.sep.join([self.directory, filename])
 
-            self._f = open(self._fpath, 'wb')
+            self._f = open(self._fpath, 'w+b')
+            if self.write_in_place:
+                fcntl.flock(self._f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if self.playback_index_db and hasattr(self.playback_index_db, 'on_init_file'):
+                    filename = os.path.basename(self._fpath)
+                    self.playback_index_db.on_init_file(filename, warcprox_meta)
 
             if not self.skip_info:
                 warcinfo_record = self._build_warcinfo_record(self._f_finalname)
@@ -257,23 +313,19 @@ class WarcWriter(object):
         return self._f
 
 
-    def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length):
-        # metadata record, no final tasks
-        if not recorded_url.response_recorder and recorded_url.content_type:
-            return
+    def _final_tasks(self, recorded_url, recordset, recordset_offset, record_length, writer):
+        digest_key = None
 
-        if self.dedup_db or self.playback_index_db:
-            digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
-        else:
-            digest_key = None
+        # digest only for non custom types?
+        if not recorded_url.custom_type and recorded_url.response_recorder:
+            if self.dedup_db or self.playback_index_db:
+                digest_key = self.digest_str(recorded_url.response_recorder.payload_digest)
 
-        if (self.dedup_db is not None
-                and recordset[0].get_header(warctools.WarcRecord.TYPE) == warctools.WarcRecord.RESPONSE
-                and recorded_url.response_recorder.payload_size() > 0):
-            self.dedup_db.save_digest(digest_key,
-                                      recordset[0],
-                                      recorded_url,
-                                      recordset_offset)
+            if self.dedup_db is not None:
+                self.dedup_db.save_digest(digest_key,
+                                          recordset[0],
+                                          recorded_url,
+                                          recordset_offset)
 
         if self.playback_index_db is not None:
             self.playback_index_db.save_url(self._f_finalname,
@@ -281,14 +333,20 @@ class WarcWriter(object):
                                             recorded_url,
                                             recordset_offset,
                                             record_length,
-                                            digest_key)
+                                            digest_key,
+                                            writer)
 
-        recorded_url.response_recorder.tempfile.close()
+        if recorded_url.response_recorder:
+            recorded_url.response_recorder.tempfile.close()
 
     def write_records(self, recorded_url):
         recordset = self.build_warc_records(recorded_url)
 
-        writer = self._writer()
+        # if writing was skipped, just return
+        if not recordset:
+            return
+
+        writer = self._writer(recorded_url.warcprox_meta)
         recordset_offset = writer.tell()
 
         for record in recordset:
@@ -300,10 +358,10 @@ class WarcWriter(object):
                     record.get_header(warctools.WarcRecord.URL),
                     self._fpath, offset))
 
-        self._f.flush()
+        writer.flush()
         record_length = writer.tell() - recordset_offset
 
-        self._final_tasks(recorded_url, recordset, recordset_offset, record_length)
+        self._final_tasks(recorded_url, recordset, recordset_offset, record_length, writer)
 
         self._last_activity = time.time()
 
@@ -315,10 +373,22 @@ class MultiWarcWriter(WarcWriter):
     """
     def __init__(self, *args, **kwargs):
         super(MultiWarcWriter, self).__init__(*args, **kwargs)
+        self.output_dir_key = kwargs.get('output_dir', 'output_dir')
         self.writers = {}
 
+        if len(args) > 0:
+            args = args[1:]
+        else:
+            kwargs.pop('directory', '')
+
+        self.args = args
+        self.kwargs = kwargs
+
+        self.abs_dir = os.path.abspath(self.directory)
+
     def write_records(self, recorded_url):
-        target = recorded_url.warcprox_meta['target']
+        target = recorded_url.warcprox_meta.get(self.output_dir_key, 'default')
+        writer_type = recorded_url.warcprox_meta.get('writer_type', 'def')
 
         new_dir = os.path.join(self.directory, target)
 
@@ -326,31 +396,50 @@ class MultiWarcWriter(WarcWriter):
             if not os.path.isdir(new_dir):
                 os.makedirs(new_dir)
 
-            self.writers[target] = WarcWriter(
-                directory=new_dir,
-                rollover_size=self.rollover_size,
-                gzip=self.gzip,
-                prefix=self.prefix,
-                port=self.port,
-                digest_algorithm=self.digest_algorithm,
-                base32=self.base32,
-                dedup_db=self.dedup_db,
-                playback_index_db=self.playback_index_db,
-                skip_info=self.skip_info,
-                write_in_place=self.write_in_place)
+            self.writers[target] = {}
 
-        self.writers[target].write_records(recorded_url)
+        writers = self.writers[target]
+
+        if writer_type not in writers:
+            writers[writer_type] = WarcWriter(new_dir, *self.args, **self.kwargs)
+
+        writers[writer_type].write_records(recorded_url)
 
     def on_check_rollover(self):
-        for k, writer in list(self.writers.items()):
-            if not writer.on_check_rollover():
-                del self.writers[k]
+        for k, writers in list(self.writers.items()):
+            for writer in writers.values():
+                if not writer.on_check_rollover():
+                    del self.writers[k]
 
     def close_writer(self):
-        for writer in self.writers.values():
-            writer.close_writer()
+        for writers in self.writers.values():
+            for writer in writers.values():
+                writer.close_writer()
 
         self.writers = {}
+
+    def close_coll_writer_and_delete(self, output_dir):
+        try:
+            writers = self.writers.pop(output_dir)
+            for writer in writers.values():
+                writer.close_writer()
+        except KeyError:
+            pass
+
+        parent_dir = os.path.dirname(output_dir.rstrip(os.path.sep))
+        self.delete_dir(parent_dir)
+
+    def delete_dir(self, dir_):
+        dir_ = os.path.abspath(dir_)
+        common = os.path.commonprefix([self.abs_dir, dir_])
+        if not common.startswith(self.abs_dir):
+            print('Attempt to delete invalid path: ' + dir_)
+            return False
+
+        if os.path.isdir(dir_):
+            print('*** Deleting: ' + dir_)
+            shutil.rmtree(dir_)
+            return True
 
 
 class WarcWriterThread(threading.Thread):
@@ -392,3 +481,20 @@ class WarcWriterThread(threading.Thread):
         self.warc_writer.close_writer();
 
 
+class CloseAndDeleteCollThread(threading.Thread):
+    def __init__(self, multiwriter, redis):
+        threading.Thread.__init__(self, name='CloseAndDeleteCollThread')
+        self.multiwriter = multiwriter
+        self.redis = redis
+        self.pubsub = self.redis.pubsub()
+        self.pubsub.subscribe(['delete_coll', 'delete_user'])
+        self.daemon = True
+
+    def run(self):
+        for item in self.pubsub.listen():
+            print(item)
+            if item['type'] == 'message':
+                if item['channel'] == 'delete_coll':
+                    self.multiwriter.close_coll_writer_and_delete(item['data'])
+                elif item['channel'] == 'delete_user':
+                    self.multiwriter.delete_dir(item['data'])
