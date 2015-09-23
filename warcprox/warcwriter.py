@@ -137,12 +137,16 @@ class WarcWriter(object):
                     content_type=hanzo.httptools.ResponseMessage.CONTENT_TYPE,
                     remote_ip=recorded_url.remote_ip)
 
-        request_record = self.build_warc_record(
-                url=recorded_url.url, warc_date=warc_date,
-                data=recorded_url.request_data,
-                warc_type=warctools.WarcRecord.REQUEST,
-                content_type=hanzo.httptools.RequestMessage.CONTENT_TYPE,
-                concurrent_to=principal_record.id)
+        if (self.dedup_db and hasattr(self.dedup_db, 'skip_request')
+            and self.dedup_db.skip_request(recorded_url)):
+            request_record = None
+        else:
+            request_record = self.build_warc_record(
+                    url=recorded_url.url, warc_date=warc_date,
+                    data=recorded_url.request_data,
+                    warc_type=warctools.WarcRecord.REQUEST,
+                    content_type=hanzo.httptools.RequestMessage.CONTENT_TYPE,
+                    concurrent_to=principal_record.id)
 
         return principal_record, request_record
 

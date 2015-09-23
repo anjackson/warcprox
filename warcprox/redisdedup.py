@@ -24,6 +24,7 @@ class RedisDedupDb(object):
     CDX_KEY = ':cdxj'
     WARC_KEY = ':warc'
     DONE_WARC_KEY = ':warc:done'
+    SKIP_URL_KEY = ':x:'
 
     TOTALS = 'h:totals'
 
@@ -107,6 +108,17 @@ class RedisDedupDb(object):
         #result['d'] = result['d'].encode('latin1')
 
         return result
+
+    def skip_request(self, recorded_url):
+        if not recorded_url or recorded_url.command == 'GET':
+            return False
+
+        user_id = recorded_url.warcprox_meta.get(self.user_id, 'default')
+        result = self.redis.get(user_id + self.SKIP_URL_KEY + recorded_url.url)
+        if result:
+            return True
+        else:
+            return False
 
     #def save_url(self, digest, response_record, offset, length, filename, recorded_url):
     def save_url(self, filename, response_record, recorded_url, offset, length, digest, writer):
