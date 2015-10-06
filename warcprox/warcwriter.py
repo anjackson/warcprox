@@ -279,10 +279,13 @@ class WarcWriter(object):
             self.close_writer()
 
         if self._f == None:
-            prefix = warcprox_meta.get('sesh_id')
-            if prefix:
-                prefix = prefix.replace(':', '-')
-            else:
+            prefix = warcprox_meta.get('name_prefix')
+            if not prefix:
+                prefix = warcprox_meta.get('sesh_id')
+                if prefix:
+                    prefix = prefix.replace(':', '-')
+
+            if not prefix:
                 prefix = self.prefix
 
             writer_type = warcprox_meta.get('writer_type', '')
