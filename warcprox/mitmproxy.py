@@ -142,7 +142,11 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
             # if self.is_connect we already connected in do_CONNECT
             self.url = self._construct_tunneled_url()
 
-        self._proxy_request()
+        try:
+            self._proxy_request()
+        except Exception as e:
+            import traceback
+            traceback.print_exc(e)
 
 
     def _proxy_request(self):

@@ -223,6 +223,7 @@ class WarcProxyHandler(MitmProxyHandler):
                 warcprox_meta=warcprox_meta, status=h.status,
                 command=self.command)
 
+        self.logger.debug('Queuing ' + str(self.url))
         self.server.recorded_url_q.put(recorded_url)
 
     def _handle_custom_record(self, type_):
