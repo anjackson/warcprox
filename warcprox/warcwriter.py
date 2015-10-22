@@ -480,6 +480,9 @@ class WarcWriterThread(threading.Thread):
                     if self.warc_writer.playback_index_db:
                         self.warc_writer.playback_index_db.sync()
                     self._last_sync = time.time()
+            except Exception as e:
+                import traceback
+                traceback.print_exc(e)
 
         self.logger.info('WarcWriterThread shutting down')
         self.warc_writer.close_writer();
