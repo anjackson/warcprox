@@ -75,6 +75,9 @@ class WarcWriter(object):
                 dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S.%f")
 
         if not dt:
+            dt = recorded_url.datetime
+
+        if not dt:
             dt = datetime.utcnow()
 
         warc_date = warctools.warc.warc_datetime_str(dt)

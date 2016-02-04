@@ -37,6 +37,9 @@ import hashlib
 import json
 import socket
 
+from email.utils import parsedate
+from datetime import datetime
+
 import concurrent.futures
 
 from certauth.certauth import CertificateAuthority
@@ -49,6 +52,8 @@ class ProxyingRecorder(object):
     """
 
     logger = logging.getLogger("warcprox.warcprox.ProxyingRecorder")
+
+    LINK_RX = re.compile('<([^>]+)>;\s*rel="original"')
 
     def __init__(self, fp, proxy_dest, digest_algorithm='sha1', path=''):
         self.fp = fp
@@ -63,6 +68,8 @@ class ProxyingRecorder(object):
         self._prev_hunk_last_two_bytes = b''
         self.len = 0
         self.path = path
+        self.memento_datetime = None
+        self.memento_link_original = None
 
     def _update_payload_digest(self, hunk):
         if self.payload_digest is None:
@@ -127,8 +134,30 @@ class ProxyingRecorder(object):
         # XXX depends on implementation details of self.fp.readline(), in
         # particular that it doesn't call self.fp.read()
         hunk = self.fp.readline(size)
+
+        if self.payload_digest is None:
+            self._parse_response_header(hunk)
+
         self._update(hunk)
         return hunk
+
+    def _parse_response_header(self, buff):
+        buff = buff.lower()
+
+        if not self.memento_datetime:
+            mem = buff.split('memento-datetime: ', 1)
+            if len(mem) == 2:
+                mem = mem[1].strip()
+                self.memento_datetime = datetime(*parsedate(mem)[:6])
+
+        if not self.memento_link_original:
+            link = buff.split('link: ')
+            if len(link) == 2:
+                link = link[1].strip()
+                m = self.LINK_RX.search(link)
+                if m:
+                    self.memento_link_original = m.group(1)
+
 
     def close(self):
         return self.fp.close()
@@ -272,6 +301,13 @@ class RecordedUrl(object):
 
         self.request_data = request_data
         self.response_recorder = response_recorder
+
+        if self.response_recorder.memento_datetime:
+            self.datetime = self.response_recorder.memento_datetime
+            if self.response_recorder.memento_link_original:
+                self.url = self.response_recorder.memento_link_original
+        else:
+            self.datetime = datetime.now()
 
         # Optional metadata dict, if any, passed to warcprox
         if warcprox_meta:
