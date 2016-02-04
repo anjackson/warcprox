@@ -161,7 +161,7 @@ class RedisDedupDb(object):
 
         added = False
         for cdx in value.split('\n'):
-            pi.zadd(cdx_key, 0, value)
+            pi.zadd(cdx_key, 0, cdx)
             added = True
             if self.sesh_timeout > 0:
                 pi.expire(cdx_key, self.sesh_timeout)
