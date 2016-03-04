@@ -6,7 +6,6 @@ import re
 
 from datetime import datetime, timedelta
 from hanzo import warctools
-from itertools import imap
 from collections import OrderedDict
 
 from pywb.warc.cdxindexer import write_cdx_index

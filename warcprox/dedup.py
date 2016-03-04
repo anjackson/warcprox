@@ -8,7 +8,10 @@ except ImportError:
     try:
         import gdbm as dbm_gnu
     except ImportError:
-        import anydbm as dbm_gnu
+        try:
+            import anydbm as dbm_gnu
+        except ImportError:
+            import dbm.dumb as dbm_gnu
 
 import logging
 import os
