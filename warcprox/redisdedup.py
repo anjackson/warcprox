@@ -51,7 +51,8 @@ class RedisDedupDb(object):
 
     def save_digest(self, digest, response_record, recorded_url, offset):
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
-        self.redis.setex(key + self.DEDUP_URL_KEY + recorded_url.url, self.dupe_timeout, digest)
+        url = recorded_url.url.decode('latin-1')
+        self.redis.setex(key + self.DEDUP_URL_KEY + url, self.dupe_timeout, digest)
 
         if ((response_record.get_header(warctools.WarcRecord.TYPE) !=
              warctools.WarcRecord.RESPONSE) or
@@ -62,13 +63,14 @@ class RedisDedupDb(object):
         url = response_record.get_header(warctools.WarcRecord.URL)
         date = response_record.get_header(warctools.WarcRecord.DATE)
 
-        py_value = {'i': record_id,
-                    'u': url,
-                    'd': date}
+        py_value = {'i': record_id.decode('latin-1'),
+                    'u': url.decode('latin-1'),
+                    'd': date.decode('latin-1')
+                   }
 
         json_value = json.dumps(py_value, separators=(',',':'))
 
-        self.redis.hset(key + self.DEDUP_KEY, digest, json_value.encode('utf-8'))
+        self.redis.hset(key + self.DEDUP_KEY, digest, json_value.encode('latin-1'))
 
         self.logger.debug('redis dedup saved {}:{}'.format(digest, json_value))
 
@@ -89,8 +91,9 @@ class RedisDedupDb(object):
             print('Skip dedup of: ' + str(recorded_url.command))
             return None
 
+        url = recorded_url.url.decode('latin-1')
         # if very recent, then skip
-        recent_digest = self.redis.get(key + self.DEDUP_URL_KEY + recorded_url.url)
+        recent_digest = self.redis.get(key + self.DEDUP_URL_KEY + url)
         if recent_digest == digest:
             print('SKIPPING RECENT')
             return dict(skip=True)
@@ -100,11 +103,11 @@ class RedisDedupDb(object):
         if not json_result:
             return None
 
-        result = json.loads(json_result.decode('utf-8'))
+        result = json.loads(json_result.decode('latin-1'))
 
-        #result['i'] = result['i'].encode('latin1')
-        #result['u'] = result['u'].encode('latin1')
-        #result['d'] = result['d'].encode('latin1')
+        result['i'] = result['i'].encode('latin-1')
+        result['u'] = result['u'].encode('latin-1')
+        result['d'] = result['d'].encode('latin-1')
 
         return result
 
@@ -121,8 +124,8 @@ class RedisDedupDb(object):
 
     #def save_url(self, digest, response_record, offset, length, filename, recorded_url):
     def save_url(self, filename, response_record, recorded_url, offset, length, digest, writer):
-        url = response_record.get_header(warctools.WarcRecord.URL).decode('latin1')
-        date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin1')
+        url = response_record.get_header(warctools.WarcRecord.URL).decode('latin-1')
+        date = response_record.get_header(warctools.WarcRecord.DATE).decode('latin-1')
 
         key = recorded_url.warcprox_meta.get(self.sesh_key, 'default')
         dedup_key = key + self.DEDUP_KEY
@@ -159,7 +162,7 @@ class RedisDedupDb(object):
         value = outfile.getvalue()
 
         added = False
-        for cdx in value.split('\n'):
+        for cdx in value.split(b'\n'):
             pi.zadd(cdx_key, 0, cdx)
             added = True
             if self.sesh_timeout > 0:

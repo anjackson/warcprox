@@ -254,14 +254,14 @@ class WarcWriter(object):
 
         warcinfo_fields = []
         #warcinfo_fields.append(b'software: warcprox ' + warcprox.version_bytes)
-        warcinfo_fields.append(b'software: webrecorder.io 2.0 (warcprox ' + warcprox.version_bytes + ')')
+        warcinfo_fields.append(b'software: webrecorder.io 2.0 (warcprox ' + warcprox.version_bytes + b')')
         hostname = socket.gethostname()
         warcinfo_fields.append('hostname: {}'.format(hostname).encode('latin1'))
         try:
             host_ip = socket.gethostbyname(hostname)
         except:
             host_ip = '127.0.0.1'
-        warcinfo_fields.append('ip: {0}'.format(host_ip.encode('latin1')))
+        warcinfo_fields.append('ip: {0}'.format(host_ip).encode('latin1'))
         warcinfo_fields.append(b'format: WARC File Format 1.0')
         # warcinfo_fields.append('robots: ignore')
         # warcinfo_fields.append('description: {0}'.format(self.description))
@@ -300,7 +300,7 @@ class WarcWriter(object):
 
             self._fpath = os.path.sep.join([self.directory, filename])
 
-            self._f = open(self._fpath, 'w+b')
+            self._f = open(self._fpath, 'a+b')
             if self.write_in_place:
                 fcntl.flock(self._f, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 if self.playback_index_db and hasattr(self.playback_index_db, 'on_init_file'):
@@ -482,7 +482,7 @@ class WarcWriterThread(threading.Thread):
                     self._last_sync = time.time()
             except Exception as e:
                 import traceback
-                traceback.print_exc(e)
+                traceback.print_exc()
 
         self.logger.info('WarcWriterThread shutting down')
         self.warc_writer.close_writer();
