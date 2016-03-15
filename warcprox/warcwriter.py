@@ -428,6 +428,7 @@ class MultiWarcWriter(WarcWriter):
             for writer in writers.values():
                 writer.close_writer()
         except KeyError:
+            print('No Writer for ' + output_dir)
             pass
 
         parent_dir = os.path.dirname(output_dir.rstrip(os.path.sep))
@@ -500,6 +501,10 @@ class CloseAndDeleteCollThread(threading.Thread):
     def run(self):
         for item in self.pubsub.listen():
             print(item)
+            item['type'] = item['type'].decode('utf-8')
+            item['channel'] = item['channel'].decode('utf-8')
+            item['data'] = item['data'].decode('utf-8')
+
             if item['type'] == 'message':
                 if item['channel'] == 'delete_coll':
                     self.multiwriter.close_coll_writer_and_delete(item['data'])
