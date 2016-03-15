@@ -424,6 +424,7 @@ class MultiWarcWriter(WarcWriter):
         self.writers = {}
 
     def close_coll_writer_and_delete(self, output_dir):
+        print('Closing Writers for: ' + output_dir)
         try:
             writers = self.writers.pop(output_dir)
             for writer in writers.values():
@@ -510,7 +511,7 @@ class CloseAndDeleteCollThread(threading.Thread):
     def handle_item(self, item):
         print(item)
 
-        if item['type'] == b'message':
+        if item['type'] == 'message':
             if item['channel'] == b'delete_coll':
                 self.multiwriter.close_coll_writer_and_delete(item['data'].decode('utf-8'))
             elif item['channel'] == b'delete_user':
