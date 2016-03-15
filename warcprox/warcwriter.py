@@ -21,6 +21,7 @@ import hanzo.httptools
 from hanzo import warctools
 import warcprox
 import json
+import six
 
 class WarcWriter(object):
     logger = logging.getLogger("warcprox.warcwriter.WarcWriter")
@@ -500,13 +501,19 @@ class CloseAndDeleteCollThread(threading.Thread):
 
     def run(self):
         for item in self.pubsub.listen():
-            print(item)
-            item['type'] = item['type'].decode('utf-8')
-            item['channel'] = item['channel'].decode('utf-8')
-            item['data'] = item['data'].decode('utf-8')
+            try:
+                self.handle_item(item)
+            except:
+                import traceback
+                traceback.print_exc()
 
-            if item['type'] == 'message':
-                if item['channel'] == 'delete_coll':
-                    self.multiwriter.close_coll_writer_and_delete(item['data'])
-                elif item['channel'] == 'delete_user':
-                    self.multiwriter.delete_dir(item['data'])
+    def handle_item(self, item):
+        print(item)
+
+        if item['type'] == b'message':
+            if item['channel'] == b'delete_coll':
+                self.multiwriter.close_coll_writer_and_delete(item['data'].decode('utf-8'))
+            elif item['channel'] == b'delete_user':
+                self.multiwriter.delete_dir(item['data'].decode('utf-8'))
+
+
