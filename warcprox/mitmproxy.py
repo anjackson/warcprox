@@ -146,7 +146,7 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
             self._proxy_request()
         except Exception as e:
             import traceback
-            traceback.print_exc(e)
+            traceback.print_exc()
 
 
     def _proxy_request(self):
@@ -176,7 +176,7 @@ class MitmProxyHandler(http_server.BaseHTTPRequestHandler):
         self.send_header('x-warcprox-error', code)
         self.end_headers()
         if self.command != 'HEAD' and code >= 200 and code not in (204, 304):
-            self.wfile.write(content)
+            self.wfile.write(content.encode('utf-8'))
 
     def __getattr__(self, item):
         if item.startswith('do_'):

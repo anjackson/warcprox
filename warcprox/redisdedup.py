@@ -116,7 +116,8 @@ class RedisDedupDb(object):
             return False
 
         user_id = recorded_url.warcprox_meta.get(self.user_id, 'default')
-        result = self.redis.get(user_id + self.SKIP_URL_KEY + recorded_url.url)
+        url = recorded_url.url.decode('latin-1')
+        result = self.redis.get(user_id + self.SKIP_URL_KEY + url)
         if result:
             return True
         else:
