@@ -227,7 +227,7 @@ class WarcProxyHandler(MitmProxyHandler):
         self.server.recorded_url_q.put(recorded_url)
 
     def _handle_custom_record(self, type_):
-        request_data = ''
+        request_data = b''
 
         if type_ == 'metadata':
             # use custom metadata scheme
